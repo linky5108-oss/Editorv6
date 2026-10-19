@@ -1,0 +1,6 @@
+{
+  "name": "Editor Asternal",
+  "description": "Editor nativo de escenas y juegos de Asternal.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

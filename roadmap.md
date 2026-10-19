@@ -1,0 +1,16 @@
+# Tareas
+- [x] Corregir la presentación del perfil propio, sus campos y ventanas de edición.
+- [x] Corregir la presentación del perfil público que ven otros usuarios.
+- [x] Verificar ambos perfiles en 320px, 428px y escritorio con datos aislados; cancelación, QR, seguidores, confianza y portafolio comprobados (guardado en cuentas reales no verificado: sin sesión del servicio externo).
+- [x] Quitar del feed las tarjetas de juegos que muestran imágenes vacías sin borrar los juegos (los posts con juegos fijados siguen visibles).
+- [x] Corregir recortes, imágenes y ventanas de Tienda.
+- [x] Verificar Tienda en móvil y escritorio y ejecutar pruebas del filtro de publicaciones (compra real no comprobada: cuenta de prueba sin saldo del servicio).
+- [x] Corregir el borde que sobresale del compositor de publicaciones.
+- [x] Revisar y corregir recortes en campos, herramientas, pestañas y tarjetas de publicaciones.
+- [x] Verificar publicaciones en móvil y escritorio (sesión local de prueba; sin publicar ni modificar datos reales).
+- [x] Quitar el espacio sobrante bajo la navegación inferior.
+- [x] Abrir el panel de Orbes al pulsar el saldo del inicio (enlace comprobado; contenido requiere sesión real).
+- [x] Unificar el azul del botón de crear del inicio.
+- [x] Ajustar el menú al dispositivo y su desplazamiento.
+- [x] Quitar el espacio reservado de la preview y bajar ligeramente la marca.
+- [x] Revisar y verificar la presentación del inicio (comprobación visual aislada; sin acceso a una sesión real del servicio externo).

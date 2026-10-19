@@ -1,11 +1,34 @@
-<div align="center">
+# Editor Asternal
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+Editor nativo de juegos de Asternal extraído del portal original y preparado para abrirse directamente en una página web.
 
-  <h1>Built with AI Studio</h2>
+## Incluye
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+- Constructor de escenas y capas.
+- Inspector de objetos y biblioteca de recursos.
+- Editor de interfaz (UI).
+- Editor de texturas y pintura.
+- Animaciones por sprites.
+- Editor de scripts.
+- Vista previa integrada con `PLAY`.
+- Proyectos y biblioteca guardados localmente en el navegador.
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+La aplicación no necesita base de datos ni credenciales para funcionar en modo local. Las funciones de sincronización y publicación que dependían del portal original quedan disponibles en el código, pero el editor abre y guarda proyectos localmente por defecto.
 
-</div>
+## Desarrollo
+
+```bash
+pnpm install --no-frozen-lockfile --ignore-scripts
+pnpm dev
+```
+
+Abre `http://localhost:3000/` o `http://localhost:3000/editor`.
+
+## Compilación
+
+```bash
+pnpm install --no-frozen-lockfile --ignore-scripts
+pnpm exec vite build
+```
+
+La salida queda en `dist/public`.
