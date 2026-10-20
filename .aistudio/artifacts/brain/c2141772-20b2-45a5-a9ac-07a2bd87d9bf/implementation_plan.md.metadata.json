@@ -1,6 +1,6 @@
 {
-  "summary": "Plan de corrección para el borrado total en una sola pasada en el lienzo de dibujo (PaintEditor y GalleryCanvasPanel), rasterización automática de formas y textos de la capa al borrar, alcance completo de la punta del estabilizador al soltar el puntero, corrección de duplicado al aplanar/fusionar capas e historial completo de deshacer/rehacer para operaciones de capas y volteo de lienzo.",
-  "updatedAt": "2026-10-19T00:01:59.169724878Z",
+  "summary": "Plan de implementación para el Modo Inteligencia Artificial con Orión, edición integral del documento HTML5 del juego (runtime, físicas, lógicas, sonidos y distribución de recursos) con sincronización bidireccional hacia el editor visual y acceso desde un botón fijo en la esquina superior izquierda del editor.",
+  "updatedAt": "2026-10-19T22:46:44.402376788Z",
   "requestFeedback": true,
   "userFacing": true
 }

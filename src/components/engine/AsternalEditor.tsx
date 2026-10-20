@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Settings, Layers, Copy, X, Eye, EyeOff, Lock, Unlock, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Trash2, Plus, Upload, Home, MousePointer2, Boxes, Square, Flower2, Triangle, Target, PersonStanding, Eraser, SlidersHorizontal, PanelsTopLeft, Image as ImageIcon, Layers3, Play, LibraryBig, Save, Gem, Pencil } from "lucide-react";
+import { Settings, Layers, Copy, X, Eye, EyeOff, Lock, Unlock, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Trash2, Plus, Upload, Home, MousePointer2, Boxes, Square, Flower2, Triangle, Target, PersonStanding, Eraser, SlidersHorizontal, PanelsTopLeft, Image as ImageIcon, Layers3, Play, LibraryBig, Save, Gem, Pencil, Sparkles } from "lucide-react";
 import { schedulePushToCloud, scheduleAssetLibraryPush, pullAssetLibraryFromCloud, activateCloudProjectIfBlank } from "@/lib/engine/cloud-sync";
 import { supabase } from "@/integrations/supabase/client";
 import { Link, useRouter } from "@tanstack/react-router";
 import { PublishGameDialog } from "./PublishGameDialog";
-import type { EntityKind, Project, SpriteAsset, Entity, Scene, Hitbox, SceneLayer } from "@/lib/engine/core";
+import type { CustomSoundSynth, EntityKind, Project, SpriteAsset, Entity, Scene, Hitbox, SceneLayer } from "@/lib/engine/core";
 import { placedEntitySize } from "@/lib/engine/sprite-placement";
 import { applyEditedDrawing } from "@/lib/engine/sprite-edit";
 import {
@@ -19,10 +19,16 @@ import { useFormFactor } from "@/hooks/use-mobile";
 import { fileToDataURL, imageSize } from "@/lib/engine/images";
 import { SceneEditor } from "./SceneEditor";
 import { GameRuntime } from "./GameRuntime";
+import {
+  entityToEditableSvgDataUrl,
+  exportProjectHtml5,
+  syncRuntimeAndTexturesToProject,
+} from "@/lib/engine/html5-game";
 import { AnimationEditor } from "./AnimationEditor";
 import { PaintEditor } from "./PaintEditor";
 import { UIEditor } from "./UIEditor";
 import { ProjectManager } from "./ProjectManager";
+import { OrionAiModeScreen } from "./OrionAiModeScreen";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import { ScriptEditor } from "./ScriptEditor";
@@ -75,6 +81,8 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
   const [tab, setTab] = useState<Tab>("build");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [orionModeOpen, setOrionModeOpen] = useState(false);
+  const [scriptManualEntityId, setScriptManualEntityId] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [showManager, setShowManager] = useState(false);
@@ -99,10 +107,10 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
     const id = wanted ?? getCurrentProjectId();
     setProjectId(id);
     setCurrentProjectId(id);
-    const loaded = loadProjectById(id) ?? loadProject();
+    let loaded = loadProjectById(id) ?? loadProject();
     if (loaded) {
-      // migrate: ensure every scene has at least one layer
       loaded.scenes = loaded.scenes.map(s => ensureSceneLayers(s));
+      loaded = syncRuntimeAndTexturesToProject(loaded);
     }
     lastSavedRef.current = loaded;
     setDirty(false);
@@ -161,8 +169,9 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
 
   const openProject = (id: string) => {
     setCurrentProjectId(id);
-    const p = loadProjectById(id);
-    if (!p) return;
+    const raw = loadProjectById(id);
+    if (!raw) return;
+    const p = syncRuntimeAndTexturesToProject(raw);
     setProjectId(id);
     lastSavedRef.current = p;
     setDirty(false);
@@ -251,16 +260,50 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
 
   const selected = activeScene.entities.find(e => e.id === selectedId) ?? null;
   // El tope de FPS experimental (120) solo existe en el motor beta.
-  const allowedFps: number[] = beta ? [60, 120] : [60];
+  const allowedFps: number[] = beta ? [30, 60, 120] : [30, 60];
   const playProject = allowedFps.includes(project.settings.fpsCap)
     ? project
     : { ...project, settings: { ...project.settings, fpsCap: 60 as const } };
 
+  const openScriptManual = (entityId?: string | null) => {
+    setScriptManualEntityId(entityId ?? selectedId ?? null);
+    setOrionModeOpen(true);
+  };
+
+  if (orionModeOpen) {
+    return (
+      <OrionAiModeScreen
+        project={project}
+        initialTargetEntityId={scriptManualEntityId}
+        onChangeProject={(nextProject) => {
+          const synced = syncRuntimeAndTexturesToProject(nextProject);
+          setProject(synced);
+          if (projectId) {
+            saveProjectById(projectId, synced);
+            lastSavedRef.current = synced;
+            setDirty(false);
+            setSavedAt(Date.now());
+            schedulePushToCloud(projectId, synced);
+          }
+        }}
+        onSaveProject={saveNow}
+        onExit={() => {
+          setProject((prev) => (prev ? syncRuntimeAndTexturesToProject(prev) : prev));
+          setOrionModeOpen(false);
+        }}
+      />
+    );
+  }
+
   if (playing) {
     return (
-      <div className="h-screen w-full">
+      <div className="relative h-screen w-full">
         <GameRuntime
           scene={activeScene}
+          scenes={playProject.scenes}
+          assets={playProject.assets}
+          customRuntime={playProject.customRuntime}
+          title={playProject.name}
           fpsCap={playProject.settings.fpsCap}
           showHUD={playProject.settings.showHUD}
           showFPS={playProject.settings.showFPS ?? true}
@@ -315,7 +358,7 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
 
     <div className="flex h-full flex-1 flex-col overflow-hidden min-w-0">
       {/* Top bar */}
-      <header className="editor-bar flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b">
+      <header className="editor-bar flex flex-wrap items-center justify-between gap-2 py-2 px-3 border-b">
         <div className="flex min-w-0 items-center gap-2.5">
           {!isTablet && <Logo />}
           <div className="min-w-0">
@@ -450,6 +493,16 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
             library={library}
             onOpenLibrary={() => setLibraryOpen(true)}
             project={project}
+            onOpenScriptManual={openScriptManual}
+            onRegisterTexture={(dataUrl, name, w, h) => {
+              setProject((prev) =>
+                prev
+                  ? syncRuntimeAndTexturesToProject(prev, [
+                      { name, width: w, height: h, dataUrl },
+                    ])
+                  : prev,
+              );
+            }}
           />
         )}
 
@@ -524,6 +577,7 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
             project={project}
             onChange={setProject}
             beta={beta}
+            onOpenScriptManual={() => openScriptManual(null)}
           />
         )}
 
@@ -738,6 +792,8 @@ function InspectorPanel({
   library,
   onOpenLibrary,
   project,
+  onOpenScriptManual,
+  onRegisterTexture,
 }: {
   scene: import("@/lib/engine/core").Scene;
   entityId: string | null;
@@ -746,13 +802,29 @@ function InspectorPanel({
   library: LibraryItem[];
   onOpenLibrary: () => void;
   project?: Project;
+  onOpenScriptManual?: (entityId?: string | null) => void;
+  onRegisterTexture?: (dataUrl: string, name: string, w: number, h: number) => void;
 }) {
   const t = useT();
   const ent = scene.entities.find(e => e.id === entityId);
 
   if (!ent) {
+    const totalSceneScripts = scene.entities.reduce((acc, e) => acc + (e.scripts?.length ?? 0), 0);
     return (
       <div className="h-full overflow-auto p-4 space-y-3">
+        <button
+          type="button"
+          onClick={() => onOpenScriptManual?.(null)}
+          data-testid="open-scene-script-manual-btn"
+          className="w-full px-3 py-2.5 rounded-md bg-primary/10 border border-accent/50 text-primary-glow font-display text-xs tracking-widest flex items-center justify-between glow-border"
+        >
+          <span className="inline-flex items-center gap-1.5">
+            <Sparkles size={14} className="text-primary" />
+            <span>SCRIPT MANUAL · IA</span>
+          </span>
+          <span className="font-mono text-[10px] opacity-80">{totalSceneScripts} SCRIPT MANUAL</span>
+        </button>
+
         <SectionTitle>{t("scene.props")}</SectionTitle>
         <Field label={t("settings.gameName")} value={scene.name} onChange={v => onChangeScene({ ...scene, name: v })} />
         <Slider label={t("scene.gravity")} value={scene.gravity} min={0} max={3000} step={50}
@@ -860,25 +932,36 @@ function InspectorPanel({
 
       <TexturePicker
         texture={ent.texture ?? null}
+        fallbackImage={entityToEditableSvgDataUrl(ent)}
+        entityName={ent.name || ent.kind}
+        entityWidth={ent.w}
+        entityHeight={ent.h}
         fit={ent.textureFit ?? "stretch"}
         onPick={(dataUrl, size) => {
-          if (!size) { update({ texture: dataUrl }); return; }
+          if (!size) {
+            update({ texture: dataUrl });
+            onRegisterTexture?.(dataUrl, ent.name || ent.kind, ent.w, ent.h);
+            return;
+          }
           // La textura trae su tamaño: el objeto lo adopta (así no se deforma) y
           // conserva su centro en la escena.
+          const nextW = Math.max(1, Math.round(size.w));
+          const nextH = Math.max(1, Math.round(size.h));
           update({
             texture: dataUrl,
-            w: Math.max(1, Math.round(size.w)),
-            h: Math.max(1, Math.round(size.h)),
+            w: nextW,
+            h: nextH,
             x: Math.round(ent.x + ent.w / 2 - size.w / 2),
             y: Math.round(ent.y + ent.h / 2 - size.h / 2),
           });
+          onRegisterTexture?.(dataUrl, ent.name || ent.kind, nextW, nextH);
         }}
         onClear={() => update({ texture: null })}
         onFit={(f) => update({ textureFit: f })}
       />
 
       <AnimationsButton entity={ent} onUpdate={update} />
-      <ScriptsButton entity={ent} onUpdate={update} />
+      <ScriptsButton entity={ent} onUpdate={update} onOpenScriptManual={() => onOpenScriptManual?.(ent.id)} />
       <DialogEditor entity={ent} onUpdate={update} />
       <HitboxEditor entity={ent} onUpdate={update} />
 
@@ -1092,7 +1175,7 @@ function ScenesPanel({
 }
 
 
-function SettingsPanel({ project, onChange, beta = false }: { project: Project; onChange: (p: Project) => void; beta?: boolean }) {
+function SettingsPanel({ project, onChange, beta = false, onOpenScriptManual }: { project: Project; onChange: (p: Project) => void; beta?: boolean; onOpenScriptManual?: () => void }) {
   useT();
   const set = (patch: Partial<Project["settings"]>) =>
     onChange({ ...project, settings: { ...project.settings, ...patch } });
@@ -1127,6 +1210,18 @@ function SettingsPanel({ project, onChange, beta = false }: { project: Project; 
         <Toggle label="Controles táctiles" on={project.settings.touchControls ?? true} onChange={v => set({ touchControls: v })} />
         <Toggle label="Auto-pausa" on={project.settings.autoPause ?? true} onChange={v => set({ autoPause: v })} />
         <Toggle label="Mostrar hitbox" on={project.settings.showHitboxes ?? false} onChange={v => set({ showHitboxes: v })} />
+      </div>
+      <div className="pt-1 space-y-1.5">
+        <button
+          type="button"
+          onClick={() => exportProjectHtml5(project)}
+          className="w-full py-2.5 rounded-lg bg-primary/10 border border-primary/30 text-primary font-display font-semibold text-xs tracking-widest hover:bg-primary/15 active:scale-[0.98] transition"
+        >
+          ⤓ EXPORTAR JUEGO HTML5 (.HTML)
+        </button>
+        <p className="text-[10px] leading-snug text-muted-foreground/80">
+          La vista previa y el runtime ejecutan un archivo HTML5 autónomo aislado del editor, aprovechando directamente la potencia del dispositivo.
+        </p>
       </div>
 
 
@@ -1197,10 +1292,213 @@ function SettingsPanel({ project, onChange, beta = false }: { project: Project; 
 
 
 
+      <RuntimeEditorBridgePanel project={project} onChange={onChange} onOpenScriptManual={onOpenScriptManual} />
+
       <div className="pt-6 text-center text-[10px] font-mono text-muted-foreground">
         ASTERNAL ENGINE · HECHO PARA MÓVIL
       </div>
 
+    </div>
+  );
+}
+
+function RuntimeEditorBridgePanel({
+  project,
+  onChange,
+  onOpenScriptManual,
+}: {
+  project: Project;
+  onChange: (p: Project) => void;
+  onOpenScriptManual?: () => void;
+}) {
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const [newSoundName, setNewSoundName] = useState("");
+
+  const customRuntime = project.customRuntime ?? {};
+  const synthSounds = customRuntime.synthSounds ?? {};
+  const soundEntries = Object.entries(synthSounds);
+
+  const showNotice = (msg: string) => {
+    setSyncNotice(msg);
+    window.setTimeout(() => setSyncNotice(null), 3200);
+  };
+
+  const connectRuntimeAndTexturesToEditor = () => {
+    const runtimeSprites = project.scenes.flatMap((sc) =>
+      sc.entities.map((ent) => ({
+        name: ent.name || ent.kind,
+        width: ent.w,
+        height: ent.h,
+        dataUrl: entityToEditableSvgDataUrl(ent),
+      })),
+    );
+    const bridged = syncRuntimeAndTexturesToProject(project, runtimeSprites);
+    onChange(bridged);
+    showNotice(`Conectado con el editor: ${bridged.assets?.sprites?.length ?? 0} texturas y ${Object.keys(bridged.customRuntime?.synthSounds ?? {}).length} sonidos listos para editar.`);
+  };
+
+  const updateSynthSound = (key: string, patch: Partial<CustomSoundSynth>) => {
+    const current = synthSounds[key];
+    if (!current) return;
+    onChange({
+      ...project,
+      customRuntime: {
+        ...customRuntime,
+        synthSounds: {
+          ...synthSounds,
+          [key]: { ...current, ...patch },
+        },
+        customHtmlOverride: null,
+      },
+    });
+  };
+
+  const removeSynthSound = (key: string) => {
+    const next = { ...synthSounds };
+    delete next[key];
+    onChange({
+      ...project,
+      customRuntime: {
+        ...customRuntime,
+        synthSounds: next,
+        customHtmlOverride: null,
+      },
+    });
+  };
+
+  const addSynthSound = () => {
+    const clean = (newSoundName.trim() || `sfx_${ soundEntries.length + 1 }`).replace(/\s+/g, "_").toLowerCase();
+    onChange({
+      ...project,
+      customRuntime: {
+        ...customRuntime,
+        synthSounds: {
+          ...synthSounds,
+          [clean]: {
+            name: clean,
+            wave: "sine",
+            freq: 360,
+            endFreq: 720,
+            duration: 0.18,
+            volume: 0.35,
+          },
+        },
+        customHtmlOverride: null,
+      },
+    });
+    setNewSoundName("");
+  };
+
+  return (
+    <div className="space-y-3 pt-2">
+      <SectionTitle>SCRIPT MANUAL Y SONIDOS · INTELIGENCIA ARTIFICIAL</SectionTitle>
+      <div className="panel rounded-xl p-3 space-y-3 border border-primary/30">
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          Los scripts manuales se crean con inteligencia artificial sin escribir código ni bloques a mano, y quedan conectados con el editor normal.
+        </p>
+
+        {onOpenScriptManual && (
+          <button
+            type="button"
+            onClick={onOpenScriptManual}
+            data-testid="open-settings-script-manual-btn"
+            className="w-full py-2.5 px-3 rounded-lg btn-grad text-primary-foreground font-display font-semibold text-xs tracking-widest active:scale-[0.98] transition flex items-center justify-center gap-1.5"
+          >
+            <Sparkles size={14} />
+            <span>ABRIR SCRIPT MANUAL CON IA</span>
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={connectRuntimeAndTexturesToEditor}
+          data-testid="sync-runtime-to-editor-btn"
+          className="w-full py-2.5 px-3 rounded-lg bg-primary/15 border border-primary/40 text-primary font-display font-semibold text-xs tracking-widest hover:bg-primary/20 active:scale-[0.98] transition"
+        >
+          ⇄ PASAR TEXTURAS Y RUNTIME AL EDITOR NORMAL
+        </button>
+
+        {syncNotice && (
+          <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[11px] font-mono text-emerald-300">
+            {syncNotice}
+          </div>
+        )}
+
+        {/* Editor de sonidos sintetizados WebAudio del Runtime */}
+        <div className="space-y-2">
+          <label className="text-[10px] font-display tracking-widest text-muted-foreground">
+            SONIDOS SINTETIZADOS DEL RUNTIME ({soundEntries.length})
+          </label>
+          {soundEntries.length > 0 && (
+            <div className="space-y-1.5">
+              {soundEntries.map(([key, snd]) => (
+                <div key={key} className="rounded-lg border border-border/60 bg-card/70 p-2 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs text-primary-glow">synth:{key}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeSynthSound(key)}
+                      className="text-[10px] font-display text-destructive px-2 py-0.5 rounded border border-destructive/30"
+                    >
+                      ✕ QUITAR
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    <select
+                      value={snd.wave}
+                      onChange={(e) => updateSynthSound(key, { wave: e.target.value as CustomSoundSynth["wave"] })}
+                      className="rounded border border-border bg-background px-1.5 py-1 text-[10px] font-mono"
+                    >
+                      <option value="sine">sine</option>
+                      <option value="square">square</option>
+                      <option value="sawtooth">sawtooth</option>
+                      <option value="triangle">triangle</option>
+                    </select>
+                    <input
+                      type="number"
+                      value={snd.freq}
+                      onChange={(e) => updateSynthSound(key, { freq: Number(e.target.value) || 220 })}
+                      title="Frecuencia inicial (Hz)"
+                      className="rounded border border-border bg-background px-1.5 py-1 text-[10px] font-mono"
+                    />
+                    <input
+                      type="number"
+                      value={snd.endFreq ?? snd.freq}
+                      onChange={(e) => updateSynthSound(key, { endFreq: Number(e.target.value) || 440 })}
+                      title="Frecuencia final (Hz)"
+                      className="rounded border border-border bg-background px-1.5 py-1 text-[10px] font-mono"
+                    />
+                    <input
+                      type="number"
+                      step="0.05"
+                      value={snd.duration}
+                      onChange={(e) => updateSynthSound(key, { duration: Math.max(0.05, Number(e.target.value) || 0.15) })}
+                      title="Duración (s)"
+                      className="rounded border border-border bg-background px-1.5 py-1 text-[10px] font-mono"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-1.5">
+            <input
+              type="text"
+              value={newSoundName}
+              onChange={(e) => setNewSoundName(e.target.value)}
+              placeholder="Nombre del sonido (ej. salto, laser)"
+              className="flex-1 rounded-lg border border-line-strong bg-card px-2.5 py-1.5 text-xs font-mono outline-none focus:border-primary/50"
+            />
+            <button
+              type="button"
+              onClick={addSynthSound}
+              className="px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/30 text-primary font-display font-semibold text-[10px] tracking-widest"
+            >
+              + SONIDO
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1404,8 +1702,12 @@ function Toggle({ label, on, onChange }: { label: string; on: boolean; onChange:
   );
 }
 
-function TexturePicker({ texture, fit = "stretch", onPick, onClear, onFit }: {
+function TexturePicker({ texture, fallbackImage, entityName, entityWidth, entityHeight, fit = "stretch", onPick, onClear, onFit }: {
   texture: string | null;
+  fallbackImage?: string;
+  entityName?: string;
+  entityWidth?: number;
+  entityHeight?: number;
   fit?: "stretch" | "contain" | "cover";
   /** La textura, con el tamaño del dibujo cuando se conoce (para que el objeto lo adopte). */
   onPick: (dataUrl: string, size?: { w: number; h: number }) => void;
@@ -1415,6 +1717,7 @@ function TexturePicker({ texture, fit = "stretch", onPick, onClear, onFit }: {
   const inputRef = useRef<HTMLInputElement>(null);
   const [drawOpen, setDrawOpen] = useState(false);
   const t = useT();
+  const editableSourceImage = texture || fallbackImage || "";
   return (
     <div>
       <label className="text-[10px] font-display tracking-widest text-muted-foreground">{t("inspector.texture")}</label>        <div className="mt-1 flex items-center gap-2">
@@ -1425,6 +1728,8 @@ function TexturePicker({ texture, fit = "stretch", onPick, onClear, onFit }: {
         >
           {texture ? (
             <img src={texture} alt="texture" className="absolute inset-0 w-full h-full" style={{ objectFit: fit === "stretch" ? "fill" : fit, imageRendering: "auto" }} />
+          ) : fallbackImage ? (
+            <img src={fallbackImage} alt="preset" className="w-11 h-11 object-contain opacity-90" style={{ imageRendering: "auto" }} />
           ) : (
             <span className="text-xl text-muted-foreground">＋</span>
           )}
@@ -1457,10 +1762,20 @@ function TexturePicker({ texture, fit = "stretch", onPick, onClear, onFit }: {
       {drawOpen && (
         <PaintEditor
           onClose={() => setDrawOpen(false)}
-          onSave={(asset) => {
-            const url = asset.frames[0]?.composite;
+          source={
+            editableSourceImage
+              ? {
+                  image: editableSourceImage,
+                  width: Math.max(8, Math.round(entityWidth || 64)),
+                  height: Math.max(8, Math.round(entityHeight || 64)),
+                  name: entityName || "textura",
+                }
+              : undefined
+          }
+          onSave={(drawn) => {
+            const url = drawn.frames[0]?.composite;
             // El dibujo llega con su lienzo: el objeto adopta ese tamaño.
-            if (url) onPick(url, { w: asset.width, h: asset.height });
+            if (url) onPick(url, { w: drawn.width, h: drawn.height });
             setDrawOpen(false);
           }}
         />
@@ -1545,13 +1860,46 @@ function TexturesPanel({
   /**
    * Guarda la textura que se estaba editando: el dibujo nuevo ocupa el lugar del
    * anterior (mismo id, mismo nombre y, si la textura tenía varios fotogramas,
-   * el resto se conserva). Editar nunca duplica ni pierde nada.
+   * el resto se conserva) y actualiza las entidades de la escena que la usaban.
    */
   const saveEdited = (asset: SpriteAsset) => {
     const target = editing;
     if (!target) return;
-    writeSprites(sprites.map(s => (s.id === target.id ? applyEditedDrawing(s, asset) : s)));
+    const oldComposite = target.frames[0]?.composite ?? "";
+    const nextSprites = sprites.map(s => (s.id === target.id ? applyEditedDrawing(s, asset) : s));
+    const newComposite = nextSprites.find(s => s.id === target.id)?.frames[0]?.composite ?? "";
+    const nextScenes = oldComposite && newComposite && oldComposite !== newComposite
+      ? project.scenes.map(sc => ({
+          ...sc,
+          bgImage: sc.bgImage === oldComposite ? newComposite : sc.bgImage,
+          entities: sc.entities.map(ent =>
+            ent.texture === oldComposite || (!ent.texture && entityToEditableSvgDataUrl(ent) === oldComposite)
+              ? { ...ent, texture: newComposite }
+              : ent
+          ),
+          ui: (sc.ui ?? []).map(u =>
+            u.image === oldComposite ? { ...u, image: newComposite } : u
+          ),
+        }))
+      : project.scenes;
+    onChange({
+      ...project,
+      scenes: nextScenes,
+      assets: { ...(project.assets ?? { sprites: [] }), sprites: nextSprites },
+    });
     setEditing(null);
+  };
+
+  const bringFromRuntime = () => {
+    const runtimeSprites = project.scenes.flatMap((sc) =>
+      sc.entities.map((ent) => ({
+        name: ent.name || ent.kind,
+        width: ent.w,
+        height: ent.h,
+        dataUrl: entityToEditableSvgDataUrl(ent),
+      })),
+    );
+    onChange(syncRuntimeAndTexturesToProject(project, runtimeSprites));
   };
 
   const importFiles = async (files: FileList | null) => {
@@ -1562,9 +1910,9 @@ function TexturesPanel({
       layers: [],
       composite: await fileToDataURL(f),
     })));
-    // Medidas reales del primer cuadro: el asset entra con su tamaño.
+    // Medidas reales del primer cuadro: la textura entra con su tamaño.
     const dims = await imageSize(frames[0].composite) ?? { w: 32, h: 32 };
-    const asset: SpriteAsset = {
+    const created: SpriteAsset = {
       id: uid(),
       name: list[0].name.replace(/\.[^.]+$/, "").slice(0, 24) || "textura",
       width: dims.w,
@@ -1573,7 +1921,7 @@ function TexturesPanel({
       loop: true,
       frames,
     };
-    writeSprites([...sprites, asset]);
+    writeSprites([...sprites, created]);
     if (fileRef.current) fileRef.current.value = "";
   };
 
@@ -1584,9 +1932,14 @@ function TexturesPanel({
 
   return (
     <div className="h-full overflow-auto p-4 space-y-3">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <SectionTitle>TEXTURAS · {sprites.length}</SectionTitle>
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            onClick={bringFromRuntime}
+            title="Traer texturas y formas del runtime para editarlas aquí"
+            className="text-xs font-display px-2.5 py-1.5 rounded-md bg-primary/10 border border-primary/40 text-primary-glow glow-border"
+          >⇄ DEL RUNTIME</button>
           <button
             onClick={() => setPaintOpen(true)}
             title="Pintar una textura nueva"
@@ -1713,17 +2066,36 @@ function scaleScene(scene: Scene, k: number): Scene {
   };
 }
 
-function ScriptsButton({ entity, onUpdate }: { entity: Entity; onUpdate: (patch: Partial<Entity>) => void }) {
+function ScriptsButton({
+  entity,
+  onUpdate,
+  onOpenScriptManual,
+}: {
+  entity: Entity;
+  onUpdate: (patch: Partial<Entity>) => void;
+  onOpenScriptManual?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const count = entity.scripts?.length ?? 0;
   return (
     <>
       <button
-        onClick={() => setOpen(true)}
+        type="button"
+        onClick={() => {
+          if (onOpenScriptManual) {
+            onOpenScriptManual();
+          } else {
+            setOpen(true);
+          }
+        }}
+        data-testid="open-entity-script-manual-btn"
         className="w-full mt-1 px-3 py-2.5 rounded-md bg-primary/10 border border-accent/50 text-primary-glow font-display text-xs tracking-widest flex items-center justify-between glow-border"
       >
-        <span>◉ EVENTS · BLOCKS</span>
-        <span className="font-mono text-[10px] opacity-80">{count} SCRIPTS</span>
+        <span className="inline-flex items-center gap-1.5">
+          <Sparkles size={13} className="text-primary" />
+          <span>SCRIPT MANUAL</span>
+        </span>
+        <span className="font-mono text-[10px] opacity-80">{count} SCRIPT MANUAL</span>
       </button>
       {open && (
         <ScriptEditor
@@ -1731,6 +2103,7 @@ function ScriptsButton({ entity, onUpdate }: { entity: Entity; onUpdate: (patch:
           ownerLabel={entity.kind.toUpperCase()}
           aiTargetKind={entity.kind}
           aiSummary={`Entidad ${entity.kind} en ${entity.x},${entity.y} ${entity.w}x${entity.h}.`}
+          onOpenFullAiStudio={onOpenScriptManual}
           onChange={onUpdate}
           onClose={() => setOpen(false)}
         />
@@ -1796,7 +2169,7 @@ function HelpModal({ onClose }: { onClose: () => void }) {
           <li><span className="text-primary-glow">CONSTRUIR</span> · toca para colocar la herramienta, pellizca para zoom, desliza para mover.</li>
           <li><span className="text-primary-glow">SELECCIONAR</span> · toca una entidad y abre INSPECCIÓN para editarla.</li>
           <li><span className="text-primary-glow">TEXTURAS</span> · pinta un dibujo o añade imágenes; cada textura guarda su lápiz para seguir editándola cuando quieras.</li>
-          <li><span className="text-primary-glow">SCRIPTS</span> · añade bloques de eventos (onStart, onCollide) para dar vida a las entidades.</li>
+          <li><span className="text-primary-glow">SCRIPT MANUAL</span> · crea y edita scripts manuales con inteligencia artificial describiendo lo que quieres que ocurra en el juego.</li>
           <li><span className="text-primary-glow">ESCENAS</span> · renombra en línea, duplica con ⧉, escala ×N desde el inspector.</li>
           <li><span className="text-primary-glow">DATOS</span> · exporta/importa el proyecto como JSON. Guarda automáticamente.</li>
         </ul>

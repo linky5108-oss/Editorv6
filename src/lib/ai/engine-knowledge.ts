@@ -58,22 +58,49 @@ UI OVERLAY
 - UIElement { id, kind: "button"|"label"|"image"|"panel"|"bar"|"joystick", name, x,y,w,h, anchor, text, fontSize, color, bg, border, radius, opacity, image, action: "none"|"left"|"right"|"jump"|"restart"|"exit"|"event", eventName, bind: "none"|"score"|"lives"|"time", max, visible, scripts?: Script[] (eventos onTap|onHold|onRelease) }
 - resolveUIRect(el, screenW, screenH), newUIElement(kind)
 
+AUDIO Y SINTETIZADOR WEBAUDIO EN HTML5
+- Además de archivos del usuario (playSoundUrl(url), playRandomCustomSound(), loadCustomSounds(), addCustomSound(name, url), vibrate(ms), setVolume, setMuted, startMusic(url), stopMusic()), el runtime HTML5 incluye el sintetizador procedural window.AsternalAudio:
+  - Presets integrados: "jump", "coin", "laser", "dash", "explosion", "powerup", "hit", "victory", "bounce", "portal".
+  - Se pueden disparar desde bloques playSound usando soundUrl: "synth:laser" (o el nombre del sonido registrado) o desde código HTML5 con window.AsternalAudio.play("laser") / window.AsternalAudio.synth({ wave: "sine"|"square"|"sawtooth"|"triangle", freq, endFreq, duration, volume }).
+  - Para registrar nuevos sonidos en el archivo HTML5: window.AsternalAudio.registerSound("nombre", { wave, freq, endFreq, duration, volume }).
+
+RUNTIME HTML5 EDITABLE Y NUEVAS LÓGICAS (window.AsternalRuntime)
+- Todo el juego se compila y ejecuta como un documento HTML5 autónomo donde absolutamente cada parte (distribución de assets, escenas, entidades, scripts de bloques, sonidos, físicas, controles, renderizado y nuevas lógicas que no existen en los bloques) es editable directamente en el archivo HTML5.
+- API de extensión en vivo dentro de /* __ASTERNAL_CUSTOM_RUNTIME_START__ */ ... /* __ASTERNAL_CUSTOM_RUNTIME_END__ */:
+  - window.AsternalRuntime.physics = { baseSpeed: 220, jumpForce: 520, terminalVelocity: 1200, coyoteTime: 0.10, jumpBuffer: 0.12, jumpCut: 0.45 }
+  - window.AsternalRuntime.registerHook({
+      onInit(api),
+      onTick(api, dt),
+      onCollide(entityA, entityB, api),
+      onRender(ctx, api),
+      onRenderOverlay(ctx, api, width, height),
+      onKeyDown(code, key, api),
+      onKeyUp(code, key, api),
+      customBlocks: { [blockKind]: (block, ctx, api) => { ... } }
+    })
+  - Métodos de api: api.getScene(), api.getState(), api.getInput(), api.getPlayer(), api.getEntities(kind?), api.spawnEntity(kindOrPreset, overrides), api.emitBurst(x, y, color, count), api.playSound(nameOrUrl), api.synthSound(spec), api.shake(intensity, duration), api.restart(), api.switchScene(sceneId), api.physics, api.audio.
+
 PERSISTENCIA
 - loadProject, loadProjectById, saveProject, saveProjectById, getCurrentProjectId, schedulePushToCloud, cloud-sync.
 
-REGLAS PARA LA IA
-- Cuando generes scripts, usa solo EventType/BlockKind/properties reales de arriba. No inventes APIs.
+REGLAS PARA LA IA (ORIÓN)
+- Tu nombre es Orión (siempre escrito con tilde en la o: Orión), el asistente de inteligencia artificial de Asternal.
+- Conoces todas las lógicas de bloques (17 eventos y más de 50 bloques) y además puedes implementar cualquier lógica nueva directamente en el runtime HTML5 usando window.AsternalRuntime.registerHook y window.AsternalAudio.
+- CONEXIÓN OBLIGATORIA CON EL EDITOR NORMAL: Todo lo que crees o modifiques debe quedar conectado con el editor visual normal de Asternal para que la persona usuaria pueda seguir editándolo:
+  1. Cualquier objeto, enemigo, jefe, plataforma, moneda, meta o decoración debe crearse o actualizarse como entidad real de la escena (entitiesToAdd / entityUpdates) y cualquier botón o marcador como elemento de UI (uiToAdd / uiUpdates), nunca oculto solo en variables privadas del runtime JS.
+  2. Las texturas o gráficos que asignes en el runtime (en entity.texture como data:image/svg+xml;utf8,... o data:image/png;base64,... o en spritesToAdd) deben quedar vinculados a las entidades y a project.assets.sprites para que puedan editarse en el apartado Texturas con el editor de dibujo.
+  3. Conecta las mecánicas con las propiedades e inspector de las entidades (patrol, moving, spring, crumble, powerup, emitter, dialog, variables y scripts de bloques visuales) y haz que el código de window.AsternalRuntime.registerHook lea dinámicamente las entidades de la escena (api.getPlayer(), api.getEntities(), e.w, e.h, e.color, e.texture, e.variables) para que el usuario pueda seguir modificándolas en el editor normal.
+- Cuando generes scripts de bloques, usa EventType/BlockKind/properties reales, o registra nuevos bloques personalizados con customBlocks en el runtime HTML5.
 - Para scripts que involucren capas, usa layerId y el mapeo depth↔z (≤5 delante, >5 detrás) y explica al usuario el slider 1-10.
-- Distingue editor visual (capas, inspector), lógica de juego (scripts, física) y capa social (publicar, moderación).
-- Si algo no existe en el motor, dilo y sugiere alternativa con bloques reales.
 `.trim();
 
 export const ENGINE_MODULE_SUMMARY = {
   core: "Motor principal: tipos de entidades, escenas, física, renderizado, bucle del juego, API de creación y jerarquía padre/hijo (parentId, movimiento heredado). Incluye mapeo de profundidad de capas 1-10 (≤5 delante, >5 detrás).",
-  scripts: "Scripting: 14 eventos y 51 bloques visuales (incluye setVariable/broadcast/ifVariable/repeat/setProperty/changeProperty/setObjectSize).",
+  scripts: "Scripting: 17 eventos y más de 50 bloques visuales (incluye setVariable/broadcast/ifVariable/repeat/setProperty/changeProperty/setObjectSize) más bloques extensibles en HTML5.",
+  html5Runtime: "Documento HTML5 editable de extremo a extremo: distribución de assets, físicas configurables, sintetizador WebAudio (window.AsternalAudio) y hooks de lógica libre (window.AsternalRuntime).",
   storage: "Persistencia: guardado/carga de proyectos en almacenamiento local y nube.",
   animations: "Clips de animación: estados, sprites y reproducción frame a frame.",
-  sfx: "Efectos de sonido: reproducción de archivos de audio personalizados del usuario (sin preajustes).",
+  sfx: "Efectos de sonido: reproducción de archivos de audio personalizados y sintetizador WebAudio procedural en HTML5.",
   images: "Utilidades de imagen: generación y procesado de sprites.",
   cloudSync: "Sincronización con la nube: subir/descargar proyectos entre dispositivos.",
 };

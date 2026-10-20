@@ -1,5 +1,5 @@
 import type { Project } from "./core";
-import { DEFAULT_SETTINGS, newProject, uid } from "./core";
+import { DEFAULT_SETTINGS, ensureSceneLayers, newProject, uid } from "./core";
 
 const LEGACY_KEY = "asternal:project";
 const INDEX_KEY = "asternal:projects:index";
@@ -98,6 +98,7 @@ function writeIndex(items: ProjectMeta[]) {
 
 function normalize(p: Project): Project {
   if (!p.scenes?.length) return newProject();
+  p.scenes = p.scenes.map((s) => ensureSceneLayers(s));
   if (!p.assets) p.assets = { sprites: [] };
   if (!p.assets.sprites) p.assets.sprites = [];
   p.settings = { ...DEFAULT_SETTINGS, ...(p.settings ?? {}) };

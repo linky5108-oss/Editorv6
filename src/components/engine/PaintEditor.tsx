@@ -1293,7 +1293,11 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
       const ctx = layer.canvas.getContext("2d");
       if (!ctx) return;
       ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
-      ctx.drawImage(img, 0, 0);
+      if (img.width > 0 && img.height > 0 && (img.width !== layer.canvas.width || img.height !== layer.canvas.height)) {
+        ctx.drawImage(img, 0, 0, layer.canvas.width, layer.canvas.height);
+      } else {
+        ctx.drawImage(img, 0, 0);
+      }
       setHasArtwork(true);
       recomposite();
       blit();

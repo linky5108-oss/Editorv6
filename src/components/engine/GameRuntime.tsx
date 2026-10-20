@@ -1,15 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import type { Entity, RuntimeInput, RuntimeState, Scene, UIElement } from "@/lib/engine/core";
+import type { CustomRuntimeConfig, Entity, Project, RuntimeInput, RuntimeState, Scene, UIElement } from "@/lib/engine/core";
 import { stepScene, newRuntimeState, resolveUIRect, sortedForRender, isOnHiddenLayer, layerOpacityFor } from "@/lib/engine/core";
 import { getRenderableImage } from "@/lib/engine/images";
 import { currentFrameRenderable } from "@/lib/engine/animations";
 import { drawChibiCharacter } from "@/lib/engine/character";
 import { createScriptRunner, type RuntimeHooks, type UIScriptPhase } from "@/lib/engine/scripts";
 import { startMusic, stopMusic, setVolume, setMuted } from "@/lib/engine/sfx";
+import { createGameHtmlBlobUrl } from "@/lib/engine/html5-game";
 import { drawUIElement } from "./UIEditor";
 
 interface Props {
   scene: Scene;
+  scenes?: Scene[];
+  assets?: Project["assets"];
+  customRuntime?: CustomRuntimeConfig;
+  rawHtmlOverride?: string | null;
+  title?: string;
   fpsCap: 30 | 60 | 120;
   showHUD: boolean;
   showFPS?: boolean;
@@ -20,10 +26,156 @@ interface Props {
   touchControls?: boolean;
   autoPause?: boolean;
   showHitboxes?: boolean;
+  embedded?: boolean;
   onExit: () => void;
 }
 
+/**
+ * Ejecuta el juego compilándolo en un archivo HTML5 autónomo (`Blob` `text/html`)
+ * dentro de un contexto aislado (`<iframe>`). Así el rendimiento de la vista previa
+ * y del runtime depende exclusivamente de la potencia real del dispositivo y su
+ * `requestAnimationFrame` nativo, sin interferencia del árbol React ni del editor.
+ */
 export function GameRuntime({
+  scene,
+  scenes,
+  assets,
+  customRuntime,
+  rawHtmlOverride,
+  title,
+  fpsCap,
+  showHUD,
+  showFPS = true,
+  volume = 0.8,
+  muted = false,
+  music = false,
+  musicUrl = null,
+  touchControls = true,
+  autoPause = true,
+  showHitboxes = false,
+  embedded = true,
+  onExit,
+}: Props) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const onExitRef = useRef(onExit);
+  onExitRef.current = onExit;
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const bundle = createGameHtmlBlobUrl({
+      scene,
+      scenes,
+      assets,
+      customRuntime,
+      rawHtmlOverride: rawHtmlOverride ?? customRuntime?.customHtmlOverride ?? null,
+      title: title || scene.name || "Asternal HTML5 Game",
+      fpsCap,
+      showHUD,
+      showFPS,
+      volume,
+      muted,
+      music,
+      musicUrl,
+      touchControls,
+      autoPause,
+      showHitboxes,
+      embedded,
+    });
+    setBlobUrl(bundle.url);
+    return () => {
+      bundle.revoke();
+    };
+    // Solo recompila el documento HTML5 si cambia la escena, el runtime o los ajustes estructurales.
+    // El audio se sincroniza en caliente por postMessage.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scene, scenes, assets, customRuntime, rawHtmlOverride, title, fpsCap, showHUD, showFPS, touchControls, autoPause, showHitboxes, embedded]);
+
+  useEffect(() => {
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    win.postMessage(
+      {
+        type: "asternal:runtime-config",
+        volume,
+        muted,
+        music,
+        musicUrl,
+      },
+      "*",
+    );
+  }, [volume, muted, music, musicUrl]);
+
+  useEffect(() => {
+    const onMessage = (ev: MessageEvent) => {
+      const data = ev.data;
+      if (!data || typeof data !== "object" || data.type !== "asternal:runtime") return;
+      if (data.action === "exit") {
+        onExitRef.current();
+      } else if (data.action === "goal") {
+        window.dispatchEvent(
+          new CustomEvent("asternal:goal", {
+            detail: {
+              nextSceneId: data.nextSceneId ?? null,
+              endsGame: Boolean(data.endsGame),
+            },
+          }),
+        );
+      }
+    };
+
+    const onRestart = () => {
+      iframeRef.current?.contentWindow?.postMessage({ type: "asternal:runtime-restart" }, "*");
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      iframeRef.current?.contentWindow?.postMessage(
+        { type: "asternal:key", kind: "keydown", code: e.code, key: e.key },
+        "*",
+      );
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      iframeRef.current?.contentWindow?.postMessage(
+        { type: "asternal:key", kind: "keyup", code: e.code, key: e.key },
+        "*",
+      );
+    };
+
+    window.addEventListener("message", onMessage);
+    window.addEventListener("asternal:restart", onRestart);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      window.removeEventListener("asternal:restart", onRestart);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
+
+  return (
+    <div className="relative h-full w-full bg-[#0b1e3f] overflow-hidden">
+      {blobUrl && (
+        <iframe
+          ref={iframeRef}
+          src={blobUrl}
+          title={title || scene.name || "HTML5 Game Runtime"}
+          className="h-full w-full border-0 block"
+          allow="autoplay; fullscreen; gamepad"
+          onLoad={() => {
+            try {
+              iframeRef.current?.contentWindow?.focus();
+            } catch {
+              /* ignore */
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+export function LegacyCanvasGameRuntime({
   scene, fpsCap, showHUD,
   showFPS = true, volume = 0.8, muted = false, music = false, musicUrl = null,
   touchControls = true, autoPause = true, showHitboxes = false,
@@ -639,14 +791,13 @@ export function drawEntity(ctx: CanvasRenderingContext2D, e: Entity, time: numbe
     ctx.lineTo(e.x + e.w / 2 + 2, e.y + 20);
     ctx.closePath();
     ctx.fill();
+  } else if (e.kind === "player") {
+    ctx.shadowBlur = 0;
+    drawChibiCharacter(ctx, e.x, e.y, e.w, e.h, e.color, e.facing ?? 1);
   } else {
     const r = e.kind === "platform" ? 4 : 6;
     roundRect(ctx, e.x, e.y, e.w, e.h, r);
     ctx.fill();
-    if (e.kind === "player") {
-      ctx.shadowBlur = 0;
-      drawChibiCharacter(ctx, e.x, e.y, e.w, e.h, e.color, e.facing ?? 1);
-    }
   }
   ctx.restore();
 }

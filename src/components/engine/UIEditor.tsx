@@ -3,7 +3,7 @@ import type { Scene, UIElement, UIElementKind, UIAnchor, UIAction, UIBind } from
 import { newUIElement, resolveUIRect, uid } from "@/lib/engine/core";
 import { drawTransparencyGrid, fileToDataURL, getRenderableImage } from "@/lib/engine/images";
 import { canvasPixelSize, needsCanvasResize } from "@/lib/engine/canvas";
-import { UI_EVENTS, type EventType, type Script } from "@/lib/engine/scripts";
+import { UI_EVENTS, type Script } from "@/lib/engine/scripts";
 import { drawEntity } from "./GameRuntime";
 import { ScriptEditor } from "./ScriptEditor";
 
@@ -23,13 +23,6 @@ const KIND_LIST: { id: UIElementKind; icon: string; label: string }[] = [
 
 
 const ANCHORS: UIAnchor[] = ["tl","tc","tr","cl","c","cr","bl","bc","br"];
-
-/** Los tres momentos de ejecución de un script de interfaz, en un toque. */
-const EXECUTION_CHIPS: { event: EventType; label: string }[] = [
-  { event: "onTap", label: "AL PULSAR" },
-  { event: "onHold", label: "MANTENER" },
-  { event: "onRelease", label: "AL SOLTAR" },
-];
 
 type Snap = "peek" | "half" | "full";
 
@@ -51,11 +44,26 @@ export function UIEditor({ scene, onChange }: Props) {
   const pendingDragUpdate = useRef<Array<{ id: string; patch: Partial<UIElement> }> | null>(null);
 
 
-  const ui = scene.ui ?? [];
+  const rawUi = scene.ui ?? [];
+  const ui = (() => {
+    const byId = new Map<string, UIElement>();
+    for (const item of rawUi) {
+      if (!item) continue;
+      const key = item.id && item.id.trim() ? item.id.trim() : uid();
+      byId.set(key, item.id === key ? item : { ...item, id: key });
+    }
+    return byId.size === rawUi.length ? rawUi : Array.from(byId.values());
+  })();
   const selSet = new Set(selIds);
   const selectedEls = ui.filter(e => selSet.has(e.id));
   const sel = selectedEls.length === 1 ? selectedEls[0] : null;
   const selId = sel?.id ?? null;
+
+  useEffect(() => {
+    if (ui.length !== rawUi.length) {
+      onChange({ ...scene, ui });
+    }
+  }, [rawUi.length, ui.length]);
 
   // Use visualViewport on iOS Safari so URL-bar collapse/expand
   // doesn't desync the sheet/canvas sizing.
@@ -615,13 +623,8 @@ function ElementInspector({ el, update, remove, clone }: {
 }) {
 
   const fileRef = useRef<HTMLInputElement>(null);
-  /** Editor de eventos del elemento (se abre a pantalla completa). */
+  /** Editor de Script manual con IA del elemento (se abre a pantalla completa). */
   const [scriptsOpen, setScriptsOpen] = useState(false);
-  /** Anade un script listo para el momento indicado y abre el editor. */
-  const addScript = (event: EventType) => {
-    update({ scripts: [...(el.scripts ?? []), { id: uid(), event, blocks: [] } as Script] });
-    setScriptsOpen(true);
-  };
   return (
     <div className="space-y-2.5 pt-2">
       <LabeledInput label="NOMBRE" value={el.name} onChange={v => update({ name: v })} />
@@ -730,32 +733,21 @@ function ElementInspector({ el, update, remove, clone }: {
         </>
       )}
 
-      {/* Scripts del elemento: sus acciones y cuándo se ejecutan. */}
+      {/* Script manual del elemento creado con inteligencia artificial. */}
       <div className="pt-1.5">
         <div className="flex items-center justify-between mb-1">
-          <div className="text-[10px] font-display tracking-widest text-muted-foreground">SCRIPTS · EJECUCIÓN</div>
-          <span className="text-[10px] font-mono text-muted-foreground">{el.scripts?.length ?? 0} SCRIPTS</span>
-        </div>
-        <div className="grid grid-cols-3 gap-1">
-          {EXECUTION_CHIPS.map(c => (
-            <button key={c.event} onClick={() => addScript(c.event)}
-              className="py-1.5 rounded-lg text-[10px] font-display tracking-widest border border-line bg-muted text-ink-2 m3-state active:scale-[0.94] transition">
-              + {c.label}
-            </button>
-          ))}
+          <div className="text-[10px] font-display tracking-widest text-muted-foreground">SCRIPT MANUAL · IA</div>
+          <span className="text-[10px] font-mono text-muted-foreground">{el.scripts?.length ?? 0} SCRIPT MANUAL</span>
         </div>
         <button
           onClick={() => setScriptsOpen(true)}
-          className="w-full mt-1.5 px-3 py-2.5 rounded-md bg-primary/10 border border-accent/50 text-primary-glow font-display text-xs tracking-widest flex items-center justify-between glow-border"
+          className="w-full mt-1 px-3 py-2.5 rounded-md bg-primary/10 border border-accent/50 text-primary-glow font-display text-xs tracking-widest flex items-center justify-between glow-border"
         >
-          <span>◉ EVENTS · BLOCKS</span>
-          <span className="font-mono text-[10px] opacity-80">{el.scripts?.length ?? 0} SCRIPTS</span>
+          <span>✦ SCRIPT MANUAL</span>
+          <span className="font-mono text-[10px] opacity-80">{el.scripts?.length ?? 0} SCRIPT MANUAL</span>
         </button>
         <p className="mt-1 text-[10px] text-muted-foreground leading-snug">
-          {el.kind === "button"
-            ? "Se suman a la acción del botón: "
-            : "Este elemento ejecuta sus propios scripts: "}
-          cada script corre al pulsar, mientras se mantiene o al soltar el elemento.
+          Describe con tus palabras qué quieres que ocurra al tocar, mantener o soltar este elemento y la inteligencia artificial creará su script manual.
         </p>
       </div>
 

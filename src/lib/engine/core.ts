@@ -130,6 +130,8 @@ export interface Entity {
   // dialog
   dialog?: DialogSpec | null;
   _dialogPlayed?: boolean;
+  /** Nombre descriptivo opcional de la entidad. */
+  name?: string;
 }
 
 export interface ParallaxLayer { color: string; speed: number; height: number; y: number }
@@ -203,12 +205,57 @@ export interface Scene {
 
 export const DEFAULT_LAYER_ID = "default";
 
-/** Ensure a scene has at least one layer; mutate-free. */
+/** Ensure a scene has at least one layer and unique entity/UI ids; mutate-free. */
 export function ensureSceneLayers(scene: Scene): Scene {
-  if (scene.layers && scene.layers.length > 0) return scene;
+  const hasLayers = !!(scene.layers && scene.layers.length > 0);
+  const rawUi = scene.ui ?? [];
+  const uiIds = new Set<string>();
+  let hasDuplicateOrEmptyUiId = false;
+  for (const u of rawUi) {
+    if (!u?.id || uiIds.has(u.id)) {
+      hasDuplicateOrEmptyUiId = true;
+      break;
+    }
+    uiIds.add(u.id);
+  }
+
+  const entIds = new Set<string>();
+  let hasDuplicateOrEmptyEntId = false;
+  for (const e of scene.entities ?? []) {
+    if (!e?.id || entIds.has(e.id)) {
+      hasDuplicateOrEmptyEntId = true;
+      break;
+    }
+    entIds.add(e.id);
+  }
+
+  if (hasLayers && !hasDuplicateOrEmptyUiId && !hasDuplicateOrEmptyEntId) {
+    return scene;
+  }
+
   const def: SceneLayer = { id: DEFAULT_LAYER_ID, name: "Principal", z: 0, visible: true, locked: false, opacity: 1 };
-  const entities = scene.entities.map(e => e.layerId ? e : { ...e, layerId: DEFAULT_LAYER_ID });
-  return { ...scene, layers: [def], entities };
+  const layers = hasLayers ? scene.layers! : [def];
+
+  const seenEntIds = new Set<string>();
+  const entities = (scene.entities ?? []).map((e) => {
+    const cleanId = e.id && !seenEntIds.has(e.id) ? e.id : uid();
+    seenEntIds.add(cleanId);
+    const withLayer = hasLayers || e.layerId ? e : { ...e, layerId: DEFAULT_LAYER_ID };
+    return cleanId === e.id ? withLayer : { ...withLayer, id: cleanId };
+  });
+
+  let ui = scene.ui;
+  if (hasDuplicateOrEmptyUiId && rawUi.length > 0) {
+    const byId = new Map<string, UIElement>();
+    for (const item of rawUi) {
+      if (!item) continue;
+      const key = item.id && item.id.trim() ? item.id.trim() : uid();
+      byId.set(key, item.id === key ? item : { ...item, id: key });
+    }
+    ui = Array.from(byId.values());
+  }
+
+  return { ...scene, layers, entities, ...(ui !== undefined ? { ui } : {}) };
 }
 
 /**
@@ -305,12 +352,44 @@ export interface ProjectSettings {
   fpsDefault60Applied?: boolean;
 }
 
+export interface CustomSoundSynth {
+  name: string;
+  wave?: "sine" | "square" | "sawtooth" | "triangle";
+  freq?: number;
+  endFreq?: number;
+  duration?: number;
+  volume?: number;
+  url?: string;
+}
+
+export interface OrionHistoryItem {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  summary?: string[];
+  createdAt: number;
+}
+
+export interface CustomRuntimeConfig {
+  /** Código JavaScript editable de nuevas lógicas, comportamientos, eventos y físicas en el runtime HTML5. */
+  jsCode?: string;
+  /** Estilos CSS adicionales para el documento HTML5. */
+  cssCode?: string;
+  /** Efectos de sonido sintetizados o por URL definidos en el archivo HTML5. */
+  synthSounds?: Record<string, CustomSoundSynth>;
+  /** Si el documento HTML5 fue modificado en su estructura base fuera de los bloques estándar, conserva la edición completa. */
+  customHtmlOverride?: string | null;
+  /** Historial de conversación con Orión asociado a este proyecto. */
+  orionHistory?: OrionHistoryItem[];
+}
+
 export interface Project {
   name: string;
   scenes: Scene[];
   activeSceneId: string;
   assets?: { sprites: SpriteAsset[] };
   settings: ProjectSettings;
+  customRuntime?: CustomRuntimeConfig;
 }
 
 export const DEFAULT_SETTINGS: ProjectSettings = {

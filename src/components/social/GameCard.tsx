@@ -33,6 +33,7 @@ export function GameCard({
 }) {
   const navigate = useNavigate();
   const [playing, setPlaying] = useState<Scene | null>(null);
+  const [playingProject, setPlayingProject] = useState<Project | null>(null);
   // Marca de inicio de la partida actual (para registrar la sesión en el historial).
   const sessionRef = useRef<{ startedAt: number } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -91,7 +92,7 @@ export function GameCard({
     } catch { /* el historial nunca debe romper la partida */ }
   };
 
-  const closeGame = () => { endSession(); setPlaying(null); };
+  const closeGame = () => { endSession(); setPlaying(null); setPlayingProject(null); };
 
   // Si el componente se desmonta con la partida abierta (navegar, cerrar feed),
   // igualmente se registra la sesión con lo jugado hasta ese momento.
@@ -102,6 +103,7 @@ export function GameCard({
     const proj = (await loadGameProject(post.signed_media[0])) as Project;
     const scene = proj.scenes.find(s => s.id === proj.activeSceneId) ?? proj.scenes[0];
     if (!scene) throw new Error("Escena inválida");
+    setPlayingProject(proj);
     setPlaying(scene);
     sessionRef.current = { startedAt: Date.now() };
     // Registra la jugada para el ranking de «más jugados (24h)».
@@ -178,12 +180,22 @@ export function GameCard({
   };
 
   if (playing) {
+    const cfg = playingProject?.settings;
     return (
       <div className="fixed inset-0 z-[100] bg-background" style={{ height: "100dvh", width: "100vw" }}>
         <GameRuntime
           scene={playing}
-          fpsCap={60}
-          showHUD={true}
+          scenes={playingProject?.scenes}
+          title={title}
+          fpsCap={cfg?.fpsCap ?? 60}
+          showHUD={cfg?.showHUD ?? true}
+          showFPS={cfg?.showFPS ?? true}
+          volume={cfg?.volume ?? 0.8}
+          muted={cfg?.muted ?? false}
+          music={cfg?.music ?? false}
+          musicUrl={cfg?.musicUrl ?? null}
+          touchControls={cfg?.touchControls ?? true}
+          autoPause={cfg?.autoPause ?? true}
           onExit={closeGame}
         />
         <button

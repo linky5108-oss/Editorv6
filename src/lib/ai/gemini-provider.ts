@@ -245,6 +245,28 @@ export function parseAiJson<T = unknown>(value: string): T {
     // No era una cadena escapada: basta con el texto tal cual.
   }
 
+  // Si la IA añadió una introducción o cierre antes/después del bloque ```json ... ```
+  const fencedMatch = /```(?:json)?\s*([\s\S]*?)```/i.exec(value ?? "");
+  if (fencedMatch?.[1]) {
+    const fencedBody = fencedMatch[1].trim();
+    if (fencedBody) {
+      attempts.push(fencedBody, unescapeExtra(fencedBody));
+    }
+  }
+
+  // Si hay texto conversacional alrededor de un objeto {...} o array [...]
+  const firstBrace = raw.indexOf("{");
+  const lastBrace = raw.lastIndexOf("}");
+  const firstBracket = raw.indexOf("[");
+  const lastBracket = raw.lastIndexOf("]");
+  if (firstBrace !== -1 && lastBrace > firstBrace && (firstBracket === -1 || firstBrace < firstBracket)) {
+    const slice = raw.slice(firstBrace, lastBrace + 1);
+    attempts.push(slice, unescapeExtra(slice));
+  } else if (firstBracket !== -1 && lastBracket > firstBracket) {
+    const slice = raw.slice(firstBracket, lastBracket + 1);
+    attempts.push(slice, unescapeExtra(slice));
+  }
+
   for (const attempt of attempts) {
     try {
       return JSON.parse(stripFence(attempt)) as T;
@@ -254,3 +276,4 @@ export function parseAiJson<T = unknown>(value: string): T {
   }
   throw new Error("La IA no devolvió un JSON válido.");
 }
+

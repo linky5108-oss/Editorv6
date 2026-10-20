@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port=3000 --host=0.0.0.0",
+    "dev": "tsx server/_core/index.ts",
     "build": "tsc -b && vite build && esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --loader:.md=text --outdir=dist",
     "build:dev": "vite build --mode development",
     "start": "NODE_ENV=production node dist/index.js",
@@ -16,6 +16,7 @@
     "deploy:rules": "firebase deploy --only storage:rules"
   },
   "dependencies": {
+    "@google/genai": "^2.30.0",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",

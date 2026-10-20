@@ -79,7 +79,7 @@ export default defineConfig({
     host: "0.0.0.0",
     port: 3000,
     allowedHosts: true,
-    hmr: process.env.DISABLE_HMR !== "true" ? { overlay: false } : false,
+    hmr: false,
     watch: process.env.DISABLE_HMR === "true" ? null : {},
     proxy: {
       "/__supabase-mgmt": {

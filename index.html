@@ -21,6 +21,33 @@
   <script>
     (function () {
       try {
+        var NativeWS = window.WebSocket;
+        if (typeof NativeWS === "function") {
+          var WrappedWS = function (url, protocols) {
+            if (protocols === "vite-hmr" || (Array.isArray(protocols) && protocols.indexOf("vite-hmr") !== -1)) {
+              var dummy = new EventTarget();
+              dummy.readyState = 1;
+              dummy.OPEN = 1;
+              dummy.CONNECTING = 0;
+              dummy.CLOSING = 2;
+              dummy.CLOSED = 3;
+              dummy.protocol = "vite-hmr";
+              dummy.url = String(url || "");
+              dummy.send = function () {};
+              dummy.close = function () { dummy.readyState = 3; };
+              return dummy;
+            }
+            return arguments.length > 1 ? new NativeWS(url, protocols) : new NativeWS(url);
+          };
+          WrappedWS.prototype = NativeWS.prototype;
+          WrappedWS.CONNECTING = 0;
+          WrappedWS.OPEN = 1;
+          WrappedWS.CLOSING = 2;
+          WrappedWS.CLOSED = 3;
+          window.WebSocket = WrappedWS;
+        }
+      } catch (e) { /* ignore */ }
+      try {
         var p = JSON.parse(localStorage.getItem("ast_preferences") || "{}");
         var theme = p.theme === "dark" ? "dark" : "light";
         var root = document.documentElement;

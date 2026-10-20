@@ -6,7 +6,7 @@ import {
   childrenOf, entityById, removeEntityWithChildren, setEntityPosition,
 } from "@/lib/engine/core";
 import { canvasPixelSize, needsCanvasResize } from "@/lib/engine/canvas";
-import { getRenderableImage } from "@/lib/engine/images";
+import { getImage, getRenderableImage } from "@/lib/engine/images";
 import { currentFrameRenderable } from "@/lib/engine/animations";
 import { drawChibiCharacter } from "@/lib/engine/character";
 
@@ -245,10 +245,21 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
       ctx.scale(scale, scale);
 
       const grd = ctx.createLinearGradient(0, 0, 0, scene.height);
-      grd.addColorStop(0, "#0b1e3f");
+      grd.addColorStop(0, scene.bg || "#0b1e3f");
       grd.addColorStop(1, "#030712");
       ctx.fillStyle = grd;
       ctx.fillRect(0, 0, scene.width, scene.height);
+      if (scene.bgImage) {
+        const bgImg = getRenderableImage(scene.bgImage);
+        if (bgImg) {
+          ctx.drawImage(bgImg, 0, 0, scene.width, scene.height);
+        } else {
+          const pendingBg = getImage(scene.bgImage);
+          if (pendingBg && !pendingBg.onload) {
+            pendingBg.onload = () => render(performance.now());
+          }
+        }
+      }
 
       // grid (uses current snap)
       const gridStep = snap > 0 ? Math.max(snap, 8) : 40;
@@ -296,7 +307,14 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
         } else if (e.texture) {
           const img = getRenderableImage(e.texture);
           if (img) drawFit(img);
-          else { ctx.fillStyle = "rgba(56,189,248,0.15)"; ctx.fillRect(0, 0, e.w, e.h); }
+          else {
+            ctx.fillStyle = "rgba(56,189,248,0.15)";
+            ctx.fillRect(0, 0, e.w, e.h);
+            const pendingImg = getImage(e.texture);
+            if (pendingImg && !pendingImg.onload) {
+              pendingImg.onload = () => render(performance.now());
+            }
+          }
         } else {
           // Match GameRuntime fallback shapes so editor preview == PLAY preview
           ctx.save();
