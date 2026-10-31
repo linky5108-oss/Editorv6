@@ -50,139 +50,140 @@
   --color-error-ink: var(--error-ink);
   --color-warn-ink: var(--warn-ink);
 
-  --font-display: "Space Grotesk", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
-  --font-sans: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+  --font-display: "Drawably Pen", "Patrick Hand", "Inter", system-ui, sans-serif;
+  --font-sans: "Drawably Pen", "Patrick Hand", "Inter", system-ui, sans-serif;
+  --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, "SF Mono", monospace;
 }
 
 :root {
-  --radius: 0.75rem;
+  --radius: 0.5rem;
 
-  /* ── Lienzo "espacio profundo": claro, frío, casi blanco ── */
-  --canvas: oklch(0.972 0.006 252);
-  --background: var(--canvas);
-  --foreground: oklch(0.165 0.028 258);
-  --ink: oklch(0.165 0.028 258);
-  --ink-2: oklch(0.43 0.028 256);
-  --ink-3: oklch(0.55 0.022 256);
+  /* ── Paleta exacta de https://www.drawably.dev/ (papel, grafito y tinta) ── */
+  --paper: #e3e3e1;
+  --pen: #2724d1;
+  --drawably-stroke: #2724d1;
+  --drawably-fill: #2724d1;
+  --drawably-paper: #e3e3e1;
+  --drawably-error: #d12724;
+  --drawably-success: #188a42;
 
-  /* ── Superficies ── */
-  --card: oklch(1 0 0);
-  --card-foreground: var(--ink);
-  --surface-2: oklch(0.95 0.008 252);
-  --popover: oklch(1 0 0);
-  --popover-foreground: var(--ink);
+  --canvas: #e3e3e1;
+  --background: #e3e3e1;
+  --foreground: #18181b;
+  --ink: #18181b;
+  --ink-2: #474645;
+  --ink-3: #71717a;
 
-  /* ── Azul Asternal «Azure Drift»: cobalto → azur → cielo (suave, luminoso,
-     profesional). Es la única familia azul de la app: botones, degradados,
-     sombras de color y monogramas usan estos mismos tonos. ── */
-  --primary: oklch(0.55 0.15 262);
-  --primary-foreground: oklch(0.99 0 0);
-  --primary-glow: oklch(0.63 0.12 252);
-  --blue-600: oklch(0.46 0.15 268);
-  --azure: oklch(0.72 0.08 236);
-  --violet-accent: oklch(0.63 0.15 300);
-  --cyan-accent: oklch(0.75 0.07 210);
-  --accent: var(--azure);
-  --accent-foreground: oklch(0.25 0.03 260);
+  /* ── Superficies de papel de boceto ── */
+  --card: #ebeae6;
+  --card-foreground: #18181b;
+  --surface-2: #dad9d5;
+  --popover: #efeeea;
+  --popover-foreground: #18181b;
 
-  --secondary: var(--surface-2);
-  --secondary-foreground: oklch(0.27 0.03 256);
+  /* ── Tinta de bolígrafo azul Drawably (#2724d1) y tintas secundarias ── */
+  --primary: #2724d1;
+  --primary-foreground: #e3e3e1;
+  --primary-glow: #3b38e0;
+  --blue-600: #2724d1;
+  --azure: #2724d1;
+  --violet-accent: #6d4bd6;
+  --cyan-accent: #0f766e;
+  --accent: color-mix(in oklab, #2724d1 12%, #e3e3e1);
+  --accent-foreground: #2724d1;
 
-  --muted: var(--surface-2);
-  --muted-foreground: oklch(0.52 0.024 256);
+  --secondary: #dad9d5;
+  --secondary-foreground: #18181b;
 
-  /* ── Líneas y estados ── */
-  --line: oklch(0.9 0.012 252 / 0.6);
-  --line-strong: oklch(0.83 0.016 252 / 0.75);
+  --muted: #dad9d5;
+  --muted-foreground: #474645;
+
+  /* ── Trazos de lápiz y estados ── */
+  --line: rgba(24, 24, 27, 0.28);
+  --line-strong: rgba(24, 24, 27, 0.62);
   --border: var(--line);
-  --input: oklch(0.92 0.008 252 / 0.7);
-  --ring: oklch(0.55 0.13 262 / 0.35);
-  --grid: oklch(0.87 0.01 252 / 0.4);
-  --destructive: oklch(0.577 0.215 25);
-  --destructive-foreground: oklch(0.99 0 0);
-  --success: oklch(0.62 0.17 155);
-  --warn: oklch(0.75 0.16 80);
+  --input: rgba(24, 24, 27, 0.45);
+  --ring: rgba(39, 36, 209, 0.45);
+  --grid: rgba(24, 24, 27, 0.10);
+  --destructive: #c2410c;
+  --destructive-foreground: #e3e3e1;
+  --success: #0f766e;
+  --warn: #b45309;
 
-  /* ── Elevación (jerarquía: borde → sombra) ── */
-  --shadow-xs: 0 1px 2px 0 oklch(0.2 0.02 260 / 0.05);
-  --shadow-sm: 0 1px 3px 0 oklch(0 0 0 / 0.06), 0 1px 2px -1px oklch(0 0 0 / 0.06);
-  --shadow-md: 0 4px 12px -2px oklch(0 0 0 / 0.08), 0 2px 4px -2px oklch(0 0 0 / 0.04);
-  --shadow-lg: 0 12px 28px -8px oklch(0 0 0 / 0.10), 0 4px 12px -4px oklch(0 0 0 / 0.06);
-  --shadow-xl: 0 20px 44px -12px oklch(0 0 0 / 0.14);
+  /* ── Sombras de boceto a lápiz (trazo desplazado, sin difuminado artificial) ── */
+  --shadow-xs: 1.5px 1.5px 0 0 rgba(24, 24, 27, 0.14);
+  --shadow-sm: 2px 2px 0 0 rgba(24, 24, 27, 0.18);
+  --shadow-md: 3px 3px 0 0 rgba(24, 24, 27, 0.20);
+  --shadow-lg: 4px 4px 0 0 rgba(24, 24, 27, 0.22);
+  --shadow-xl: 5px 5px 0 0 rgba(24, 24, 27, 0.26);
 
-/* Sombras de color (elementos flotando sobre el lienzo blanco) */
-  --shadow-float: 0 18px 44px -18px oklch(0.5 0.13 266 / 0.3);
-  --shadow-glow: 0 10px 30px -12px oklch(0.55 0.14 262 / 0.3), 0 4px 18px -8px oklch(0.68 0.08 230 / 0.26);
+  --shadow-float: 4px 5px 0 0 rgba(39, 36, 209, 0.22);
+  --shadow-glow: 3px 3px 0 0 rgba(39, 36, 209, 0.28);
 
-  /* Los tokens de material (--glass-*) y de elevación los define glass.css:
-     la interfaz es siempre Material 3, sin vidrio ni variantes. */
+  /* ── Rellenos achurados de tinta en lugar de degradados sintéticos ── */
+  --gradient-asternal: linear-gradient(135deg, #2724d1 0%, #1e1bb8 100%);
+  --gradient-asternal-soft: repeating-linear-gradient(-45deg, rgba(39, 36, 209, 0.09) 0px, rgba(39, 36, 209, 0.09) 2px, transparent 2px, transparent 6px);
+  --gradient-asternal-deep: linear-gradient(135deg, #18181b 0%, #2724d1 100%);
 
-  /* ── Degradados oficiales (DESIGN.md §2.2) ── */
-  /* ÚNICO degradado de marca: 135° cobalto → azur → cielo (Azure Drift). */
-  --gradient-asternal: linear-gradient(135deg, oklch(0.52 0.15 266) 0%, oklch(0.61 0.12 254) 48%, oklch(0.74 0.08 234) 100%);
-  /* Variantes del MISMO degradado: diluido (acentos de fondo) y suave-profundo (banner destacado). */
-  --gradient-asternal-soft: linear-gradient(135deg, oklch(0.52 0.15 266 / 0.1), oklch(0.61 0.12 254 / 0.08) 48%, oklch(0.74 0.08 234 / 0.06));
-  --gradient-asternal-deep: linear-gradient(135deg, oklch(0.42 0.12 266) 0%, oklch(0.48 0.11 256) 48%, oklch(0.57 0.08 236) 100%);
-
-  /* Asternal Plus — paleta Material 3 del producto (roles y tonos sólidos) en
-     glass.css: --plus, --plus-container, --plus-on-primary, --plus-outline
-     y --plus-frame-*. Aquí no se define ningún degradado de Plus. */
-
-  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-out-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out-expo: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out-smooth: cubic-bezier(0.2, 0, 0, 1);
 }
 
 
 .dark {
-  /* Tema oscuro real de Asternal (antes este bloque replicaba :root, así que
-     "oscuro" era indistinguible del claro). Misma paleta en tonos oscuros:
-     lienzo azul profundo, superficies elevadas y el azul de marca aclarado
-     para conservar el contraste AA sobre fondo oscuro. */
-  --radius: 0.75rem;
-  --canvas: oklch(0.155 0.022 262);
-  --background: var(--canvas);
-  --foreground: oklch(0.95 0.01 262);
-  --ink: oklch(0.95 0.01 262);
-  --ink-2: oklch(0.78 0.02 260);
-  --ink-3: oklch(0.64 0.02 260);
-  --card: oklch(0.215 0.024 262);
-  --card-foreground: var(--ink);
-  --surface-2: oklch(0.27 0.026 262);
-  --popover: oklch(0.235 0.024 262);
-  --popover-foreground: var(--ink);
-  --primary: oklch(0.72 0.13 260);
-  --primary-foreground: oklch(0.16 0.04 262);
-  --primary-glow: oklch(0.78 0.1 255);
-  --blue-600: oklch(0.62 0.14 266);
-  --azure: oklch(0.78 0.08 236);
-  --violet-accent: oklch(0.72 0.14 300);
-  --cyan-accent: oklch(0.82 0.07 210);
-  --accent: var(--azure);
-  --accent-foreground: oklch(0.17 0.03 260);
-  --secondary: var(--surface-2);
-  --secondary-foreground: oklch(0.9 0.01 262);
-  --muted: var(--surface-2);
-  --muted-foreground: oklch(0.74 0.02 260);
-  --line: oklch(0.34 0.025 262 / 0.85);
-  --line-strong: oklch(0.45 0.03 262 / 0.9);
+  /* Modo cuaderno oscuro: grafito claro y tinta azul luminosa sobre papel carbón */
+  --radius: 0.5rem;
+  --paper: #1c1b1a;
+  --pen: #7c7aff;
+  --drawably-stroke: #7c7aff;
+  --drawably-fill: #7c7aff;
+  --drawably-paper: #1c1b1a;
+  --drawably-error: #f87171;
+  --drawably-success: #34d399;
+
+  --canvas: #1c1b1a;
+  --background: #1c1b1a;
+  --foreground: #e7e5e0;
+  --ink: #e7e5e0;
+  --ink-2: #b8b4ac;
+  --ink-3: #8c877e;
+  --card: #252422;
+  --card-foreground: #e7e5e0;
+  --surface-2: #2e2c29;
+  --popover: #272623;
+  --popover-foreground: #e7e5e0;
+  --primary: #7c7aff;
+  --primary-foreground: #18181b;
+  --primary-glow: #9492ff;
+  --blue-600: #6b68ff;
+  --azure: #7c7aff;
+  --violet-accent: #a78bfa;
+  --cyan-accent: #2dd4bf;
+  --accent: rgba(124, 122, 255, 0.16);
+  --accent-foreground: #c4c3ff;
+  --secondary: #2e2c29;
+  --secondary-foreground: #e7e5e0;
+  --muted: #2e2c29;
+  --muted-foreground: #b8b4ac;
+  --line: rgba(231, 229, 224, 0.26);
+  --line-strong: rgba(231, 229, 224, 0.56);
   --border: var(--line);
-  --input: oklch(0.42 0.03 262 / 0.85);
-  --ring: oklch(0.72 0.13 260 / 0.55);
-  --grid: oklch(0.3 0.025 262 / 0.55);
-  --destructive: oklch(0.68 0.19 25);
-  --destructive-foreground: oklch(0.99 0 0);
-  --success: oklch(0.75 0.15 155);
-  --warn: oklch(0.82 0.14 80);
-  --gradient-asternal: linear-gradient(135deg, oklch(0.62 0.14 266) 0%, oklch(0.7 0.11 254) 48%, oklch(0.82 0.08 234) 100%);
-  --gradient-asternal-soft: linear-gradient(135deg, oklch(0.62 0.14 266 / 0.16), oklch(0.7 0.11 254 / 0.12) 48%, oklch(0.82 0.08 234 / 0.08));
-  --gradient-asternal-deep: linear-gradient(135deg, oklch(0.3 0.1 266) 0%, oklch(0.36 0.09 256) 48%, oklch(0.45 0.07 236) 100%);
-  --shadow-xs: 0 1px 2px 0 oklch(0 0 0 / 0.4);
-  --shadow-sm: 0 1px 3px 0 oklch(0 0 0 / 0.5), 0 1px 2px -1px oklch(0 0 0 / 0.5);
-  --shadow-md: 0 4px 12px -2px oklch(0 0 0 / 0.55), 0 2px 4px -2px oklch(0 0 0 / 0.4);
-  --shadow-lg: 0 12px 28px -8px oklch(0 0 0 / 0.6), 0 4px 12px -4px oklch(0 0 0 / 0.45);
-  --shadow-float: 0 18px 44px -18px oklch(0.4 0.14 266 / 0.55);
-  --shadow-glow: 0 10px 30px -12px oklch(0.55 0.14 262 / 0.45), 0 4px 18px -8px oklch(0.68 0.08 230 / 0.3);
+  --input: rgba(231, 229, 224, 0.38);
+  --ring: rgba(124, 122, 255, 0.55);
+  --grid: rgba(231, 229, 224, 0.08);
+  --destructive: #ef4444;
+  --destructive-foreground: #18181b;
+  --success: #10b981;
+  --warn: #f59e0b;
+  --gradient-asternal: linear-gradient(135deg, #7c7aff 0%, #5b58eb 100%);
+  --gradient-asternal-soft: repeating-linear-gradient(-45deg, rgba(124, 122, 255, 0.12) 0px, rgba(124, 122, 255, 0.12) 2px, transparent 2px, transparent 6px);
+  --gradient-asternal-deep: linear-gradient(135deg, #252422 0%, #4b48c9 100%);
+  --shadow-xs: 1.5px 1.5px 0 0 rgba(0, 0, 0, 0.5);
+  --shadow-sm: 2px 2px 0 0 rgba(0, 0, 0, 0.6);
+  --shadow-md: 3px 3px 0 0 rgba(0, 0, 0, 0.65);
+  --shadow-lg: 4px 4px 0 0 rgba(0, 0, 0, 0.7);
+  --shadow-float: 4px 5px 0 0 rgba(0, 0, 0, 0.7);
+  --shadow-glow: 3px 3px 0 0 rgba(124, 122, 255, 0.35);
 }
 
 @layer base {

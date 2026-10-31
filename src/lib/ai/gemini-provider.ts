@@ -203,77 +203,498 @@ export function buildGeminiScriptEditPrompt(args: {
 function stripFence(value: string): string {
   return value
     .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "")
+    .replace(/^```(?:json|js|javascript)?\s*/i, "")
+    .replace(/\s*```$/i, "")
     .trim();
 }
 
-/** Escapes que el servicio deja de más al devolver el JSON como texto. */
-const EXTRA_ESCAPES: Record<string, string> = {
-  '"': '"',
-  "\\": "\\",
-  "/": "/",
-  n: "\n",
-  t: "\t",
-  r: "\r",
-  b: "\b",
-  f: "\f",
-};
-
+/**
+ * Deshace la capa de escape adicional que añade el servicio de IA cuando
+ * devuelve un JSON serializado como texto (`\"` en las comillas del JSON,
+ * `\\\"` en las comillas internas y `\` seguido de salto de línea real en `\n`).
+ */
 function unescapeExtra(value: string): string {
-  return value.replace(/\\(["\\/bfnrt])/g, (_match, escape: string) => EXTRA_ESCAPES[escape] ?? escape);
+  return value
+    .replace(/\\\r?\n/g, "\\n")
+    .replace(/\\(["\\/])/g, "$1");
+}
+
+function repairJsonSyntax(
+  input: string,
+  fixInnerQuotes = false,
+  closeTruncated = false,
+): string {
+  let out = "";
+  let i = 0;
+  const n = input.length;
+  const stack: Array<"{" | "["> = [];
+  let inString = false;
+  let stringRole: "key" | "value" | "arrayItem" = "value";
+  let expectingKey = false;
+
+  while (i < n) {
+    const ch = input[i];
+    if (!inString) {
+      if (ch === "/" && input[i + 1] === "/") {
+        i += 2;
+        while (i < n && input[i] !== "\n") i++;
+        continue;
+      }
+      if (ch === "/" && input[i + 1] === "*") {
+        i += 2;
+        while (i < n && !(input[i] === "*" && input[i + 1] === "/")) i++;
+        if (i < n) i += 2;
+        continue;
+      }
+      if (ch === "{") {
+        stack.push("{");
+        expectingKey = true;
+        out += ch;
+        i++;
+        continue;
+      }
+      if (ch === "[") {
+        stack.push("[");
+        expectingKey = false;
+        out += ch;
+        i++;
+        continue;
+      }
+      if (ch === "}" || ch === "]") {
+        stack.pop();
+        expectingKey = false;
+        out += ch;
+        i++;
+        continue;
+      }
+      if (ch === ":") {
+        expectingKey = false;
+        out += ch;
+        i++;
+        continue;
+      }
+      if (ch === ",") {
+        const rest = input
+          .slice(i + 1)
+          .replace(/^\s*(?:\/\/[^\n]*\n\s*|\/\*[\s\S]*?\*\/\s*)*/, "");
+        if (rest.startsWith("}") || rest.startsWith("]")) {
+          i++;
+          continue;
+        }
+        if (stack[stack.length - 1] === "{") expectingKey = true;
+        out += ch;
+        i++;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        const top = stack[stack.length - 1];
+        stringRole = top === "{" ? (expectingKey ? "key" : "value") : "arrayItem";
+        out += ch;
+        i++;
+        continue;
+      }
+      out += ch;
+      i++;
+      continue;
+    }
+
+    if (ch === "\\") {
+      const next = input[i + 1];
+      if (next === undefined) {
+        out += "\\\\";
+        i++;
+        continue;
+      }
+      if (next === "\n") {
+        out += "\\n";
+        i += 2;
+        continue;
+      }
+      if (next === "\r") {
+        out += "\\n";
+        i += input[i + 2] === "\n" ? 3 : 2;
+        continue;
+      }
+      if (next === "'") {
+        out += "'";
+        i += 2;
+        continue;
+      }
+      if (
+        next === '"' ||
+        next === "\\" ||
+        next === "/" ||
+        next === "b" ||
+        next === "f" ||
+        next === "n" ||
+        next === "r" ||
+        next === "t"
+      ) {
+        out += "\\" + next;
+        i += 2;
+        continue;
+      }
+      if (next === "u" && /^[0-9a-fA-F]{4}$/.test(input.slice(i + 2, i + 6))) {
+        out += "\\u" + input.slice(i + 2, i + 6);
+        i += 6;
+        continue;
+      }
+      out += "\\\\" + next;
+      i += 2;
+      continue;
+    }
+
+    if (ch === "\n") {
+      out += "\\n";
+      i++;
+      continue;
+    }
+    if (ch === "\r") {
+      if (input[i + 1] !== "\n") out += "\\r";
+      i++;
+      continue;
+      }
+    if (ch === "\t") {
+      out += "\\t";
+      i++;
+      continue;
+    }
+    const code = ch.charCodeAt(0);
+    if (code < 0x20) {
+      out += "\\u" + code.toString(16).padStart(4, "0");
+      i++;
+      continue;
+    }
+
+    if (ch === '"') {
+      if (!fixInnerQuotes) {
+        inString = false;
+        out += '"';
+        i++;
+        continue;
+      }
+      const rest = input.slice(i + 1);
+      let isClosing = false;
+      if (stringRole === "key") {
+        isClosing = /^\s*:/.test(rest);
+      } else if (stringRole === "value") {
+        isClosing =
+          /^\s*\}/.test(rest) ||
+          /^\s*,\s*\}/.test(rest) ||
+          /^\s*,\s*"[a-zA-Z0-9_$-]+"\s*:/.test(rest);
+      } else {
+        isClosing =
+          /^\s*\]/.test(rest) ||
+          /^\s*,\s*\]/.test(rest) ||
+          /^\s*,\s*(?:["{\[\d-]|true\b|false\b|null\b)/.test(rest);
+      }
+      if (isClosing) {
+        inString = false;
+        out += '"';
+      } else {
+        out += '\\"';
+      }
+      i++;
+      continue;
+    }
+
+    out += ch;
+    i++;
+  }
+
+  if (closeTruncated && stack.length > 0 && /^[\s]*[{[]/.test(out)) {
+    if (inString) {
+      out += '"';
+      if (stringRole === "key") out += ": null";
+    }
+    out = out.replace(/,\s*$/, "");
+    if (/:\s*$/.test(out)) out += "null";
+    while (stack.length > 0) {
+      const open = stack.pop();
+      out += open === "{" ? "}" : "]";
+    }
+  }
+
+  return out;
+}
+
+function collectDelimitedSlices(source: string): string[] {
+  const slices: Array<{ start: number; text: string }> = [];
+  const lastBrace = source.lastIndexOf("}");
+  const lastBracket = source.lastIndexOf("]");
+
+  if (lastBrace > 0) {
+    let pos = source.indexOf("{");
+    let count = 0;
+    while (pos !== -1 && pos < lastBrace && count < 4) {
+      slices.push({ start: pos, text: source.slice(pos, lastBrace + 1) });
+      pos = source.indexOf("{", pos + 1);
+      count++;
+    }
+  }
+
+  if (lastBracket > 0) {
+    let pos = source.indexOf("[");
+    let count = 0;
+    while (pos !== -1 && pos < lastBracket && count < 4) {
+      slices.push({ start: pos, text: source.slice(pos, lastBracket + 1) });
+      pos = source.indexOf("[", pos + 1);
+      count++;
+    }
+  }
+
+  slices.sort((a, b) => a.start - b.start);
+  return slices.map((s) => s.text);
 }
 
 /**
  * Parseo del JSON que devuelve la IA.
  *
  * El servicio entrega a veces el JSON escapado de más, como si fuera el
- * contenido de una cadena: `\"id\"` en lugar de `"id"` y, a veces, `\n` en
- * lugar de saltos reales. Aquí se prueba el texto tal cual, luego como cadena
- * escapada y, por último, deshaciendo los escapes sobrantes. Si ninguna forma
- * da un JSON válido, lanza un error legible.
+ * contenido de una cadena: `\"id\"` en lugar de `"id"` y, a veces, `\` seguido
+ * de salto real o `\n` dentro de cadenas multilínea. Aquí se prueba el texto
+ * tal cual, luego deshaciendo los escapes sobrantes y reparando saltos/comillas
+ * internas. Si ninguna forma da un JSON válido, lanza un error legible.
  */
 export function parseAiJson<T = unknown>(value: string): T {
   const raw = stripFence(value ?? "");
   if (!raw) throw new Error("La IA no devolvió nada.");
 
-  const attempts = [raw, unescapeExtra(raw)];
+  const baseCandidates: string[] = [];
+  const pushUnique = (candidate: string) => {
+    const clean = stripFence(candidate);
+    if (clean && !baseCandidates.includes(clean)) {
+      baseCandidates.push(clean);
+    }
+  };
+
+  pushUnique(raw);
+  pushUnique(unescapeExtra(raw));
+
   try {
     const decoded = JSON.parse(`"${raw}"`);
-    if (typeof decoded === "string" && decoded !== raw) attempts.push(decoded);
+    if (typeof decoded === "string" && decoded !== raw) {
+      pushUnique(decoded);
+      pushUnique(unescapeExtra(decoded));
+    }
   } catch {
-    // No era una cadena escapada: basta con el texto tal cual.
+    // No era una cadena escapada simple.
   }
 
-  // Si la IA añadió una introducción o cierre antes/después del bloque ```json ... ```
-  const fencedMatch = /```(?:json)?\s*([\s\S]*?)```/i.exec(value ?? "");
-  if (fencedMatch?.[1]) {
-    const fencedBody = fencedMatch[1].trim();
-    if (fencedBody) {
-      attempts.push(fencedBody, unescapeExtra(fencedBody));
+  // Bloques ```json ... ``` aunque haya texto conversacional antes o después
+  const fenceRegex = /```(?:json|js|javascript)?\s*([\s\S]*?)```/gi;
+  let match: RegExpExecArray | null;
+  while ((match = fenceRegex.exec(value ?? "")) !== null) {
+    if (match[1]?.trim()) {
+      const body = match[1].trim();
+      pushUnique(body);
+      pushUnique(unescapeExtra(body));
     }
   }
 
-  // Si hay texto conversacional alrededor de un objeto {...} o array [...]
-  const firstBrace = raw.indexOf("{");
-  const lastBrace = raw.lastIndexOf("}");
-  const firstBracket = raw.indexOf("[");
-  const lastBracket = raw.lastIndexOf("]");
-  if (firstBrace !== -1 && lastBrace > firstBrace && (firstBracket === -1 || firstBrace < firstBracket)) {
-    const slice = raw.slice(firstBrace, lastBrace + 1);
-    attempts.push(slice, unescapeExtra(slice));
-  } else if (firstBracket !== -1 && lastBracket > firstBracket) {
-    const slice = raw.slice(firstBracket, lastBracket + 1);
-    attempts.push(slice, unescapeExtra(slice));
+  // Recortes delimitados {...} y [...] tanto sobre el texto crudo como sin escapes extra
+  for (const slice of collectDelimitedSlices(raw)) {
+    pushUnique(slice);
+    pushUnique(unescapeExtra(slice));
+  }
+  for (const slice of collectDelimitedSlices(unescapeExtra(raw))) {
+    pushUnique(slice);
   }
 
-  for (const attempt of attempts) {
+  const expandedAttempts: string[] = [];
+  const addAttempt = (attempt: string) => {
+    const trimmed = attempt.trim();
+    if (trimmed && !expandedAttempts.includes(trimmed)) {
+      expandedAttempts.push(trimmed);
+    }
+  };
+
+  for (const candidate of baseCandidates) {
+    addAttempt(candidate);
+    addAttempt(unescapeExtra(candidate));
+    addAttempt(repairJsonSyntax(candidate, false, false));
+    addAttempt(repairJsonSyntax(unescapeExtra(candidate), false, false));
+    addAttempt(repairJsonSyntax(candidate, true, false));
+    addAttempt(repairJsonSyntax(unescapeExtra(candidate), true, false));
+  }
+
+  for (const candidate of baseCandidates) {
+    addAttempt(repairJsonSyntax(candidate, false, true));
+    addAttempt(repairJsonSyntax(unescapeExtra(candidate), false, true));
+    addAttempt(repairJsonSyntax(candidate, true, true));
+    addAttempt(repairJsonSyntax(unescapeExtra(candidate), true, true));
+  }
+
+  for (const attempt of expandedAttempts) {
     try {
-      return JSON.parse(stripFence(attempt)) as T;
+      const parsed: unknown = JSON.parse(attempt);
+      if (typeof parsed === "string") {
+        const inner = parsed.trim();
+        if ((inner.startsWith("{") || inner.startsWith("[")) && inner !== attempt) {
+          return parseAiJson<T>(inner);
+        }
+      }
+      if (parsed !== null && parsed !== undefined) {
+        return parsed as T;
+      }
     } catch {
       // Se prueba el siguiente intento.
     }
   }
   throw new Error("La IA no devolvió un JSON válido.");
 }
+
+/**
+ * Solicita generación o edición de scripts manuales con IA:
+ * intenta primero la ruta de servidor `/api/orion/script-ai` (Gemini oficial)
+ * y recurre automáticamente a `geminiChat` (Prexzy) si la ruta local no responde.
+ */
+export async function requestScriptAi(
+  prompt: string,
+  opts: GeminiChatOptions = {},
+): Promise<GeminiChatResult> {
+  try {
+    const res = await fetch("/api/orion/script-ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        sessionId: sessionFor(opts.sessionId),
+      }),
+      signal: opts.signal,
+    });
+    if (res.ok) {
+      const payload = (await res.json().catch(() => null)) as {
+        text?: unknown;
+        response?: unknown;
+        scripts?: unknown;
+        script?: unknown;
+        model?: unknown;
+      } | null;
+      if (payload) {
+        const text =
+          typeof payload.text === "string" && payload.text.trim()
+            ? payload.text.trim()
+            : typeof payload.response === "string" && payload.response.trim()
+              ? payload.response.trim()
+              : payload.scripts || payload.script
+                ? JSON.stringify(payload.scripts ?? payload.script)
+                : "";
+        if (text) {
+          return {
+            text,
+            model: typeof payload.model === "string" ? payload.model : "Gemini",
+          };
+        }
+      }
+    }
+  } catch (err) {
+    if (opts.signal?.aborted) throw err;
+  }
+  return geminiChat([{ role: "user", content: prompt }], opts);
+}
+
+/**
+ * Respaldo determinista que construye un `Script[]` válido a partir de una petición
+ * en lenguaje natural si el proveedor de IA falla o devuelve una lista vacía.
+ */
+export function synthesizeScriptsFromRequest(
+  requestText: string,
+  allowedEvents?: string[],
+): Array<{
+  id: string;
+  event: string;
+  withKind?: string;
+  key?: "left" | "right" | "jump";
+  threshold?: number;
+  interval?: number;
+  message?: string;
+  blocks: Array<Record<string, unknown>>;
+}> {
+  const lower = (requestText ?? "").toLowerCase();
+  const makeId = () => Math.random().toString(36).slice(2, 10);
+  const canUse = (ev: string) => !allowedEvents?.length || allowedEvents.includes(ev);
+
+  let event = "onCollide";
+  let withKind: string | undefined = "player";
+  let interval: number | undefined;
+  let key: "left" | "right" | "jump" | undefined;
+
+  if (canUse("onTap") && !canUse("onCollide")) {
+    event = /manten|hold/i.test(lower) && canUse("onHold") ? "onHold" : "onTap";
+    withKind = undefined;
+  } else if (/cada\s+(\d+)\s*s|temporizador|timer|intervalo/i.test(lower) && canUse("onTimer")) {
+    event = "onTimer";
+    withKind = undefined;
+    const m = lower.match(/(\d+(?:\.\d+)?)\s*s/);
+    interval = m ? Math.max(100, Math.round(Number(m[1]) * 1000)) : 2000;
+  } else if (/fotograma|siempre|update|continuamente|persig/i.test(lower) && canUse("onUpdate")) {
+    event = "onUpdate";
+    withKind = undefined;
+  } else if (/tecla|presionar|pulsar.*salto/i.test(lower) && canUse("onKeyDown")) {
+    event = "onKeyDown";
+    withKind = undefined;
+    key = /izquierda|left/.test(lower) ? "left" : /derecha|right/.test(lower) ? "right" : "jump";
+  } else if (/iniciar|empezar|comenzar|start/i.test(lower) && canUse("onStart")) {
+    event = "onStart";
+    withKind = undefined;
+  } else if (!canUse("onCollide")) {
+    event = allowedEvents?.[0] || "onStart";
+    withKind = undefined;
+  }
+
+  const blocks: Array<Record<string, unknown>> = [];
+
+  if (/persig|chase|seguir/i.test(lower)) {
+    blocks.push({ id: makeId(), kind: "chase", text: "player", value: 110 });
+  }
+  if (/salt|impuls.*arriba|rebot/i.test(lower)) {
+    blocks.push({ id: makeId(), kind: "jump", value: 480 });
+  }
+  if (/empuj|knockback|retroce/i.test(lower)) {
+    blocks.push({ id: makeId(), kind: "knockback", x: 240, y: -300 });
+  }
+  if (/punto|score|premio|moneda/i.test(lower)) {
+    const m = lower.match(/(\d+)\s*punto/);
+    blocks.push({ id: makeId(), kind: "addScore", value: m ? Number(m[1]) : 25 });
+  }
+  if (/rest.*vida|quit.*vida|dañ|hurt/i.test(lower)) {
+    blocks.push({ id: makeId(), kind: "addLives", value: -1 });
+  } else if (/vida|coraz/i.test(lower)) {
+    blocks.push({ id: makeId(), kind: "addLives", value: 1 });
+  }
+  if (/sacud|shake|tembl/i.test(lower)) {
+    blocks.push({ id: makeId(), kind: "shake", value: 8 });
+  }
+  if (/sonido|suene|audio|efect/i.test(lower)) {
+    blocks.push({ id: makeId(), kind: "playSound", text: "coin" });
+  }
+  if (/destru|desaparec|elimin/i.test(lower)) {
+    blocks.push({ id: makeId(), kind: "destroySelf" });
+  }
+  if (/ganar|victoria|meta/i.test(lower)) {
+    blocks.push({ id: makeId(), kind: "win" });
+  }
+  if (/perder|game over|morir/i.test(lower)) {
+    blocks.push({ id: makeId(), kind: "lose" });
+  }
+
+  if (blocks.length === 0) {
+    blocks.push({ id: makeId(), kind: "jump", value: 420 });
+  }
+
+  return [
+    {
+      id: makeId(),
+      event,
+      ...(withKind ? { withKind } : {}),
+      ...(interval ? { interval } : {}),
+      ...(key ? { key } : {}),
+      blocks,
+    },
+  ];
+}
+
+
 

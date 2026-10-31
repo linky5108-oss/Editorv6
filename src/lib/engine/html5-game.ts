@@ -1,5 +1,6 @@
 import type { CustomRuntimeConfig, CustomSoundSynth, Entity, Project, Scene, SpriteAsset } from "./core";
-import { ensureSceneLayers, uid } from "./core";
+import { DEFAULT_LAYER_ID, MAIN_GOAL_PRESET, ensureSceneLayers, isMainGoalEntity, uid } from "./core";
+import { shadeColor } from "./character";
 import { loadCustomSounds, type CustomSound } from "./sfx";
 
 export interface Html5GameOptions {
@@ -22,6 +23,8 @@ export interface Html5GameOptions {
   touchControls?: boolean;
   autoPause?: boolean;
   showHitboxes?: boolean;
+  /** Orientación de la cámara de juego ("horizontal" o "vertical"). */
+  cameraOrientation?: "horizontal" | "vertical";
   /** Sonidos personalizados de la biblioteca local para bloques playSound / playRandomSound. */
   customSounds?: CustomSound[];
   /** Extensiones personalizadas del runtime HTML5 (nuevas lógicas, sonidos sintetizados, CSS, overrides). */
@@ -93,17 +96,34 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     touchControls = true,
     autoPause = true,
     showHitboxes = false,
+    cameraOrientation = "horizontal",
     customSounds = loadCustomSounds(),
     customRuntime,
     embedded = true,
   } = options;
 
   const allScenes = scenes && scenes.length > 0 ? scenes : [scene];
+  const mergedCustomSounds: CustomSound[] = [...customSounds];
+  for (const audioItem of assets?.audio ?? []) {
+    if (!audioItem?.url) continue;
+    const exists = mergedCustomSounds.some(
+      (s) => s.url === audioItem.url || s.id === audioItem.id,
+    );
+    if (!exists) {
+      mergedCustomSounds.push({
+        id: audioItem.id,
+        name: audioItem.name,
+        url: audioItem.url,
+        category: audioItem.category,
+      });
+    }
+  }
+
   const payloadJson = serializeForHtmlScript(
     {
       initialSceneId: scene.id,
       scenes: allScenes,
-      assets: assets ?? { sprites: [] },
+      assets: assets ?? { sprites: [], audio: [] },
       config: {
         fpsCap,
         showHUD,
@@ -115,9 +135,10 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
         touchControls,
         autoPause,
         showHitboxes,
+        cameraOrientation,
         embedded,
       },
-      customSounds,
+      customSounds: mergedCustomSounds,
       synthSounds: customRuntime?.synthSounds ?? {},
     },
     true,
@@ -151,12 +172,26 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     width: 100%;
     height: 100%;
     overflow: hidden;
+    margin: 0 auto;
+    contain: strict;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+  }
+  #game-root.camera-vertical {
+    max-width: min(100%, calc(100dvh * 9 / 16));
+    border-left: 1px solid rgba(56, 189, 248, 0.22);
+    border-right: 1px solid rgba(56, 189, 248, 0.22);
+    box-shadow: 0 0 40px rgba(2, 6, 23, 0.85);
   }
   #game-canvas {
     display: block;
     width: 100%;
     height: 100%;
     touch-action: none;
+    will-change: contents, transform;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    image-rendering: auto;
   }
   .top-bar {
     position: absolute;
@@ -347,7 +382,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
 </style>
 </head>
 <body>
-<div id="game-root">
+<div id="game-root" class="${cameraOrientation === "vertical" ? "camera-vertical" : "camera-horizontal"}">
   <canvas id="game-canvas"></canvas>
 
   <div class="top-bar">
@@ -405,7 +440,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     platform: { kind: "platform", w: 40, h: 40, vx: 0, vy: 0, color: "#1e3a8a", solid: true, gravity: false, controllable: false, collectible: false, hazard: false, goal: false, visible: true, opacity: 1, texture: null },
     enemy: { kind: "enemy", w: 40, h: 40, vx: 60, vy: 0, color: "#f43f5e", solid: false, gravity: true, controllable: false, collectible: false, hazard: true, goal: false, visible: true, opacity: 1, texture: null },
     coin: { kind: "coin", w: 22, h: 22, vx: 0, vy: 0, color: "#fbbf24", solid: false, gravity: false, controllable: false, collectible: true, hazard: false, goal: false, visible: true, opacity: 1, texture: null },
-    goal: { kind: "goal", w: 36, h: 64, vx: 0, vy: 0, color: "#7dd3fc", solid: false, gravity: false, controllable: false, collectible: false, hazard: false, goal: true, visible: true, opacity: 1, texture: null },
+    goal: { kind: "goal", name: "Objeto", w: 40, h: 40, vx: 0, vy: 0, color: "#7dd3fc", solid: false, gravity: false, controllable: false, collectible: false, hazard: false, goal: false, visible: true, opacity: 1, texture: null },
     decor: { kind: "decor", w: 64, h: 64, vx: 0, vy: 0, color: "#a78bfa", solid: false, gravity: false, controllable: false, collectible: false, hazard: false, goal: false, visible: true, opacity: 1, texture: null, z: -1 }
   };
 
@@ -542,17 +577,36 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     }
   }
 
+  function resolveCustomSoundUrl(urlOrName) {
+    if (!urlOrName) return null;
+    var key = String(urlOrName).trim();
+    if (!key) return null;
+    var lower = key.toLowerCase();
+    for (var i = 0; i < CUSTOM_SOUNDS.length; i++) {
+      var item = CUSTOM_SOUNDS[i];
+      if (!item || !item.url) continue;
+      if (item.id === key || item.url === key || String(item.name || "").trim().toLowerCase() === lower) {
+        return item.url;
+      }
+    }
+    var assetAudio = (PAYLOAD.assets && Array.isArray(PAYLOAD.assets.audio)) ? PAYLOAD.assets.audio : [];
+    for (var j = 0; j < assetAudio.length; j++) {
+      var a = assetAudio[j];
+      if (!a || !a.url) continue;
+      if (a.id === key || a.url === key || String(a.name || "").trim().toLowerCase() === lower) {
+        return a.url;
+      }
+    }
+    return key;
+  }
+
   function playSoundUrl(urlOrName) {
     if (muted || !urlOrName) return false;
     var key = String(urlOrName).trim();
     if (key.indexOf("synth:") === 0) key = key.slice(6);
     if (registeredSounds[key]) return playSynthSpec(registeredSounds[key]);
-    for (var i = 0; i < CUSTOM_SOUNDS.length; i++) {
-      if (CUSTOM_SOUNDS[i] && (CUSTOM_SOUNDS[i].name === key || CUSTOM_SOUNDS[i].id === key)) {
-        return playRawAudioUrl(CUSTOM_SOUNDS[i].url);
-      }
-    }
-    return playRawAudioUrl(urlOrName);
+    var resolved = resolveCustomSoundUrl(key);
+    return playRawAudioUrl(resolved || urlOrName);
   }
 
   function playRandomCustomSound() {
@@ -568,11 +622,14 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
 
   window.AsternalAudio = {
     play: function(nameOrUrl) { return playSoundUrl(nameOrNameOrSpec(nameOrUrl)); },
+    playMusic: function(nameOrUrl) { startMusic(nameOrUrl); return true; },
+    stopMusic: function() { stopMusic(); },
     synth: function(spec) { return playSynthSpec(spec); },
     registerSound: function(name, spec) {
       if (name && spec) registeredSounds[name] = spec;
     },
-    getRegisteredSounds: function() { return registeredSounds; }
+    getRegisteredSounds: function() { return registeredSounds; },
+    getAudioAssets: function() { return CUSTOM_SOUNDS; }
   };
   function nameOrNameOrSpec(v) {
     if (v && typeof v === "object") { playSynthSpec(v); return ""; }
@@ -632,21 +689,22 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     }
   }
 
-  function startMusic(url) {
-    if (muted || !url) { stopMusic(); return; }
-    if (musicEl && musicSrc === url) {
+  function startMusic(urlOrName) {
+    var resolved = resolveCustomSoundUrl(urlOrName);
+    if (muted || !resolved) { stopMusic(); return; }
+    if (musicEl && musicSrc === resolved) {
       musicEl.volume = Math.max(0, Math.min(1, volume));
       if (musicEl.paused) musicEl.play().catch(function() {});
       return;
     }
     stopMusic();
     try {
-      var a = new Audio(url);
+      var a = new Audio(resolved);
       a.loop = true;
       a.volume = Math.max(0, Math.min(1, volume));
       a.play().catch(function() {});
       musicEl = a;
-      musicSrc = url;
+      musicSrc = resolved;
     } catch (e) {}
   }
 
@@ -693,16 +751,36 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
   }
 
   // --- Layers & Hierarchy ---
+  var drawListDirty = true;
+  function markDrawListDirty() {
+    drawListDirty = true;
+  }
+
   function sortedForRender(scene) {
     var layerZ = new Map();
+    var layerVis = new Map();
+    var layerOp = new Map();
     var layers = scene.layers || [];
-    for (var i = 0; i < layers.length; i++) layerZ.set(layers[i].id, layers[i].z);
-    return scene.entities.slice().sort(function(a, b) {
+    for (var i = 0; i < layers.length; i++) {
+      var l = layers[i];
+      layerZ.set(l.id, l.z);
+      layerVis.set(l.id, l.visible !== false);
+      layerOp.set(l.id, l.opacity !== undefined ? l.opacity : 1);
+    }
+    var out = [];
+    for (var ei = 0; ei < scene.entities.length; ei++) {
+      var e = scene.entities[ei];
+      if (e.layerId && layerVis.has(e.layerId) && !layerVis.get(e.layerId)) continue;
+      e._layerOpacity = (e.layerId && layerOp.has(e.layerId)) ? layerOp.get(e.layerId) : 1;
+      out.push(e);
+    }
+    out.sort(function(a, b) {
       var az = (a.layerId && layerZ.has(a.layerId)) ? layerZ.get(a.layerId) : 0;
       var bz = (b.layerId && layerZ.has(b.layerId)) ? layerZ.get(b.layerId) : 0;
       if (az !== bz) return az - bz;
       return (a.z || 0) - (b.z || 0);
     });
+    return out;
   }
 
   function isOnHiddenLayer(scene, e) {
@@ -714,6 +792,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
   }
 
   function layerOpacityFor(scene, e) {
+    if (e._layerOpacity !== undefined) return e._layerOpacity;
     if (!e.layerId || !scene.layers) return 1;
     for (var i = 0; i < scene.layers.length; i++) {
       if (scene.layers[i].id === e.layerId) {
@@ -746,11 +825,23 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
   }
 
   function syncChildrenWithParents(scene) {
+    var ents = scene.entities;
+    var hasParent = false;
+    for (var p0 = 0; p0 < ents.length; p0++) {
+      if (ents[p0].parentId) { hasParent = true; break; }
+    }
+    if (!hasParent) {
+      for (var k = 0; k < ents.length; k++) {
+        ents[k]._px = ents[k].x;
+        ents[k]._py = ents[k].y;
+      }
+      return;
+    }
     var byId = new Map();
-    for (var i = 0; i < scene.entities.length; i++) byId.set(scene.entities[i].id, scene.entities[i]);
+    for (var i = 0; i < ents.length; i++) byId.set(ents[i].id, ents[i]);
     var childrenByParent = new Map();
-    for (var j = 0; j < scene.entities.length; j++) {
-      var ent = scene.entities[j];
+    for (var j = 0; j < ents.length; j++) {
+      var ent = ents[j];
       var pid = (ent.parentId && ent.parentId !== ent.id && byId.has(ent.parentId)) ? ent.parentId : null;
       if (!pid) continue;
       var list = childrenByParent.get(pid) || [];
@@ -758,13 +849,13 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
       childrenByParent.set(pid, list);
     }
     if (childrenByParent.size === 0) {
-      for (var k = 0; k < scene.entities.length; k++) {
-        scene.entities[k]._px = scene.entities[k].x;
-        scene.entities[k]._py = scene.entities[k].y;
+      for (var k2 = 0; k2 < ents.length; k2++) {
+        ents[k2]._px = ents[k2].x;
+        ents[k2]._py = ents[k2].y;
       }
       return;
     }
-    var order = scene.entities.slice().sort(function(a, b) {
+    var order = ents.slice().sort(function(a, b) {
       return hierarchyDepth(scene, a) - hierarchyDepth(scene, b);
     });
     for (var m = 0; m < order.length; m++) {
@@ -783,7 +874,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     }
   }
 
-  // --- Physics & Step ---
+  // --- Zero-Allocation Physics & Step ---
   function aabb(e) {
     var hb = e.hitbox;
     if (hb) return { x: e.x + hb.x, y: e.y + hb.y, w: hb.w, h: hb.h };
@@ -791,9 +882,23 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
   }
 
   function intersects(a, b) {
-    var A = aabb(a), B = aabb(b);
-    return A.x < B.x + B.w && A.x + A.w > B.x && A.y < B.y + B.h && A.y + A.h > B.y;
+    var ahb = a.hitbox;
+    var ax = ahb ? a.x + ahb.x : a.x;
+    var ay = ahb ? a.y + ahb.y : a.y;
+    var aw = ahb ? ahb.w : a.w;
+    var ah = ahb ? ahb.h : a.h;
+    var bhb = b.hitbox;
+    var bx = bhb ? b.x + bhb.x : b.x;
+    var by = bhb ? b.y + bhb.y : b.y;
+    var bw = bhb ? bhb.w : b.w;
+    var bh = bhb ? bhb.h : b.h;
+    return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
   }
+
+  var _solidsPool = [];
+  var _interactablesPool = [];
+  var _groundedSet = new Set();
+  var _groundedOnMap = new Map();
 
   function newRuntimeState(scene) {
     return {
@@ -962,10 +1067,18 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
       }
     }
 
-    var solids = scene.entities.filter(function(e) { return e.solid; });
-    var interactables = scene.entities.filter(function(e) {
-      return e.collectible || e.hazard || e.goal || e.switchId || e.checkpoint || e.crumble;
-    });
+    _solidsPool.length = 0;
+    _interactablesPool.length = 0;
+    for (var isp = 0; isp < scene.entities.length; isp++) {
+      var es = scene.entities[isp];
+      if (es.x < -9000) continue;
+      if (es.solid) _solidsPool.push(es);
+      if (es.collectible || es.hazard || es.goal || es.switchId || es.checkpoint || es.crumble) {
+        _interactablesPool.push(es);
+      }
+    }
+    var solids = _solidsPool;
+    var interactables = _interactablesPool;
 
     // Predictive ledge detection for enemies
     for (var il = 0; il < scene.entities.length; il++) {
@@ -990,8 +1103,10 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
       if (!hasGround) el.vx = -el.vx;
     }
 
-    var grounded = new Set();
-    var groundedOn = new Map();
+    _groundedSet.clear();
+    _groundedOnMap.clear();
+    var grounded = _groundedSet;
+    var groundedOn = _groundedOnMap;
     var EPS = 0.001;
 
     for (var ii = 0; ii < scene.entities.length; ii++) {
@@ -1009,20 +1124,29 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
       var anyHit = false;
       for (var ie = 0; ie < scene.entities.length; ie++) {
         var e = scene.entities[ie];
-        if (!collidesWithSolids(e)) continue;
+        if (e.x < -9000 || !collidesWithSolids(e)) continue;
+        var ehb = e.hitbox;
         for (var is = 0; is < solids.length; is++) {
           var os = solids[is];
           if (os === e || !os.solid) continue;
           if ((os.hazard && e.controllable) || (e.hazard && os.controllable)) continue;
-          if (!intersects(e, os)) continue;
+          var ax = ehb ? e.x + ehb.x : e.x;
+          var ay = ehb ? e.y + ehb.y : e.y;
+          var aw = ehb ? ehb.w : e.w;
+          var ah = ehb ? ehb.h : e.h;
+          var oshb = os.hitbox;
+          var bx = oshb ? os.x + oshb.x : os.x;
+          var by = oshb ? os.y + oshb.y : os.y;
+          var bw = oshb ? oshb.w : os.w;
+          var bh = oshb ? oshb.h : os.h;
+          if (ax >= bx + bw || ax + aw <= bx || ay >= by + bh || ay + ah <= by) continue;
           anyHit = true;
-          var A = aabb(e), B = aabb(os);
-          var pushLeft = A.x + A.w - B.x;
-          var pushRight = B.x + B.w - A.x;
-          var pushUp = A.y + A.h - B.y;
-          var pushDown = B.y + B.h - A.y;
-          var minX = Math.min(pushLeft, pushRight);
-          var minY = Math.min(pushUp, pushDown);
+          var pushLeft = ax + aw - bx;
+          var pushRight = bx + bw - ax;
+          var pushUp = ay + ah - by;
+          var pushDown = by + bh - ay;
+          var minX = pushLeft < pushRight ? pushLeft : pushRight;
+          var minY = pushUp < pushDown ? pushUp : pushDown;
           if (minY <= minX) {
             if (pushUp <= pushDown) {
               e.y -= pushUp + EPS;
@@ -1267,7 +1391,9 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
         if (b.y !== undefined) ctx.self.y = b.y;
         break;
       case "log": console.log("[script]", b.text || "", ctx.self.kind); break;
-      case "playSound": playSoundUrl(b.soundUrl); break;
+      case "playSound": playSoundUrl(b.soundUrl || b.soundName || b.text); break;
+      case "playMusic": startMusic(b.soundUrl || b.soundName || b.text); break;
+      case "stopMusic": stopMusic(); break;
       case "vibrate": vibrate(Math.max(1, b.value !== undefined ? b.value : 50)); break;
       case "shake": ctx.hooks.shake(Math.max(1, b.value !== undefined ? b.value : 8), 0.3); break;
       case "setColor": if (b.color) ctx.self.color = b.color; break;
@@ -1416,8 +1542,246 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
         break;
       }
       case "broadcast":
+      case "Broadcast":
         if (ctx.emitMessage) ctx.emitMessage((b.text || "").trim() || "message");
         break;
+      case "moveSteps": {
+        var steps = b.value !== undefined ? b.value : 10;
+        var dir = ctx.self.facing === -1 ? -1 : 1;
+        ctx.self.x += steps * dir;
+        break;
+      }
+      case "turnRight": {
+        var degR = b.value !== undefined ? b.value : 15;
+        ctx.self.rotation = (((ctx.self.rotation || 0) + degR) % 360 + 360) % 360;
+        break;
+      }
+      case "turnLeft": {
+        var degL = b.value !== undefined ? b.value : 15;
+        ctx.self.rotation = (((ctx.self.rotation || 0) - degL) % 360 + 360) % 360;
+        break;
+      }
+      case "pointInDirection": {
+        var degP = b.value !== undefined ? b.value : 90;
+        ctx.self.rotation = (((degP - 90) % 360) + 360) % 360;
+        var fDir = (degP < 0 || (degP > 180 && degP < 360)) ? -1 : 1;
+        ctx.self.facing = fDir;
+        ctx.self.flipX = fDir === -1;
+        break;
+      }
+      case "gotoTarget": {
+        var dest = (b.text || "player").trim();
+        if (dest === "random") {
+          ctx.self.x = Math.round(Math.random() * Math.max(40, ctx.scene.width - ctx.self.w));
+          ctx.self.y = Math.round(Math.random() * Math.max(40, ctx.scene.height - ctx.self.h - 80));
+        } else {
+          var gTgt = findFirstOfKind(ctx.scene, dest);
+          if (gTgt) { ctx.self.x = gTgt.x; ctx.self.y = gTgt.y; }
+        }
+        break;
+      }
+      case "glideTo": {
+        var tx = b.x !== undefined ? b.x : ctx.self.x;
+        var ty = b.y !== undefined ? b.y : ctx.self.y;
+        var durSec = Math.max(0.05, (b.value !== undefined ? b.value : 500) / 1000);
+        ctx.self.vx = (tx - ctx.self.x) / durSec;
+        ctx.self.vy = (ty - ctx.self.y) / durSec;
+        break;
+      }
+      case "ifOnEdgeBounce": {
+        var eb = ctx.self;
+        if (eb.x <= 0) { eb.x = 0; eb.vx = Math.abs(eb.vx || 120); eb.facing = 1; eb.flipX = false; }
+        else if (eb.x + eb.w >= ctx.scene.width) { eb.x = Math.max(0, ctx.scene.width - eb.w); eb.vx = -Math.abs(eb.vx || 120); eb.facing = -1; eb.flipX = true; }
+        if (eb.y <= 0) { eb.y = 0; eb.vy = Math.abs(eb.vy || 120); }
+        else if (eb.y + eb.h >= ctx.scene.height) { eb.y = Math.max(0, ctx.scene.height - eb.h); eb.vy = -Math.abs(eb.vy || 120); }
+        break;
+      }
+      case "sayForSecs":
+      case "thinkForSecs": {
+        var bDur = Math.max(0.1, (b.value !== undefined ? b.value : 2000) / 1000);
+        ctx.self._bubbleText = String(b.text !== undefined ? b.text : "¡Hola!");
+        ctx.self._bubbleKind = b.kind === "thinkForSecs" ? "think" : "say";
+        ctx.self._bubbleUntil = (ctx.clock || 0) + bDur;
+        break;
+      }
+      case "say": {
+        ctx.self._bubbleText = String(b.text !== undefined ? b.text : "¡Hola!");
+        ctx.self._bubbleKind = "say";
+        ctx.self._bubbleUntil = 0;
+        break;
+      }
+      case "clearBubble": {
+        ctx.self._bubbleText = null;
+        ctx.self._bubbleUntil = 0;
+        break;
+      }
+      case "changeSizeBy": {
+        var dPct = b.value !== undefined ? b.value : 10;
+        var sFactor = Math.max(0.1, 1 + dPct / 100);
+        ctx.self.w = Math.max(4, Math.round(ctx.self.w * sFactor));
+        ctx.self.h = Math.max(4, Math.round(ctx.self.h * sFactor));
+        break;
+      }
+      case "setSizePercent": {
+        if (!ctx.self._baseW) ctx.self._baseW = ctx.self.w;
+        if (!ctx.self._baseH) ctx.self._baseH = ctx.self.h;
+        var sPct = Math.max(10, Math.min(500, b.value !== undefined ? b.value : 100));
+        ctx.self.w = Math.max(4, Math.round(ctx.self._baseW * (sPct / 100)));
+        ctx.self.h = Math.max(4, Math.round(ctx.self._baseH * (sPct / 100)));
+        break;
+      }
+      case "clearGraphicEffects": {
+        ctx.self.opacity = 1;
+        ctx.self.rotation = 0;
+        ctx.self._bubbleText = null;
+        break;
+      }
+      case "goToFrontBack": {
+        ctx.self.z = b.text === "back" ? -10 : 10;
+        markDrawListDirty();
+        break;
+      }
+      case "goForwardBackwardLayers": {
+        ctx.self.z = Math.max(-20, Math.min(20, (ctx.self.z || 0) + (b.value !== undefined ? b.value : 1)));
+        markDrawListDirty();
+        break;
+      }
+      case "senseDistanceToVariable": {
+        var sTgt = findFirstOfKind(ctx.scene, b.varA || "player");
+        var sKey = (b.text || "").trim() || "distancia";
+        if (sTgt) {
+          var sDx = (sTgt.x + sTgt.w / 2) - (ctx.self.x + ctx.self.w / 2);
+          var sDy = (sTgt.y + sTgt.h / 2) - (ctx.self.y + ctx.self.h / 2);
+          variableBag(ctx, b.scope || "scene")[sKey] = Math.round(Math.hypot(sDx, sDy));
+        } else {
+          variableBag(ctx, b.scope || "scene")[sKey] = 9999;
+        }
+        break;
+      }
+      case "sensePropertyToVariable": {
+        var spKey = (b.text || "").trim() || "sensor";
+        var spProp = b.varB || b.property || "x";
+        var spWho = b.varA || "player";
+        var spBag = variableBag(ctx, b.scope || "scene");
+        if (spProp === "score") spBag[spKey] = ctx.state.score;
+        else if (spProp === "lives") spBag[spKey] = ctx.state.lives;
+        else if (spProp === "time") spBag[spKey] = Math.round(ctx.state.time * 10) / 10;
+        else {
+          var spEnt = spWho === "self" ? ctx.self : findFirstOfKind(ctx.scene, spWho);
+          if (spEnt && spEnt[spProp] !== undefined) {
+            var spVal = spEnt[spProp];
+            spBag[spKey] = typeof spVal === "number" ? Math.round(spVal) : String(spVal || 0);
+          }
+        }
+        break;
+      }
+      case "resetTimer": {
+        ctx.state.time = 0;
+        break;
+      }
+      case "mathOperation": {
+        var mBag = variableBag(ctx, b.scope || "scene");
+        var mKey = (b.text || "").trim() || "resultado";
+        var readOp = function(vName, fb) {
+          if (vName && String(vName).trim()) {
+            var rawStr = String(vName).trim();
+            var tr = rawStr.replace(/^\$/, "");
+            var numL = Number(tr);
+            if (rawStr.charAt(0) !== "$" && Number.isFinite(numL)) return numL;
+            if (ctx.scene.variables && ctx.scene.variables[tr] !== undefined) return Number(ctx.scene.variables[tr]) || 0;
+            if (ctx.self.variables && ctx.self.variables[tr] !== undefined) return Number(ctx.self.variables[tr]) || 0;
+            if (Number.isFinite(numL)) return numL;
+          }
+          return fb;
+        };
+        var opA = readOp(b.varA, b.x !== undefined ? b.x : 0);
+        var opB = readOp(b.varB, b.y !== undefined ? b.y : (b.value !== undefined ? b.value : 1));
+        var mOp = b.mathOp || "add";
+        var mRes = 0;
+        if (mOp === "add") mRes = opA + opB;
+        else if (mOp === "sub") mRes = opA - opB;
+        else if (mOp === "mul") mRes = opA * opB;
+        else if (mOp === "div") mRes = opB !== 0 ? Math.round((opA / opB) * 100) / 100 : 0;
+        else if (mOp === "mod") mRes = opB !== 0 ? opA % opB : 0;
+        mBag[mKey] = mRes;
+        break;
+      }
+      case "setRandomVariable": {
+        var rBag = variableBag(ctx, b.scope || "scene");
+        var rKey = (b.text || "").trim() || "azar";
+        var rMin = Math.ceil(Math.min(b.x !== undefined ? b.x : 1, b.y !== undefined ? b.y : 10));
+        var rMax = Math.floor(Math.max(b.x !== undefined ? b.x : 1, b.y !== undefined ? b.y : 10));
+        rBag[rKey] = Math.floor(Math.random() * (rMax - rMin + 1)) + rMin;
+        break;
+      }
+      case "mathFunctionVariable": {
+        var fBag = variableBag(ctx, b.scope || "scene");
+        var fKey = (b.text || "").trim() || "resultado";
+        var fIn = b.value !== undefined ? b.value : 0;
+        if (b.varA && String(b.varA).trim()) {
+          var vn = String(b.varA).trim().replace(/^\$/, "");
+          var numLit = Number(vn);
+          var rv = (ctx.scene.variables && ctx.scene.variables[vn] !== undefined)
+            ? ctx.scene.variables[vn]
+            : (ctx.self.variables ? ctx.self.variables[vn] : undefined);
+          if (rv !== undefined) fIn = Number(rv) || 0;
+          else if (Number.isFinite(numLit)) fIn = numLit;
+        }
+        var fn = b.mathFn || "abs";
+        var fOut = fIn;
+        if (fn === "abs") fOut = Math.abs(fIn);
+        else if (fn === "floor") fOut = Math.floor(fIn);
+        else if (fn === "ceil") fOut = Math.ceil(fIn);
+        else if (fn === "round") fOut = Math.round(fIn);
+        else if (fn === "sqrt") fOut = Math.round(Math.sqrt(Math.max(0, fIn)) * 100) / 100;
+        else if (fn === "sin") fOut = Math.round(Math.sin((fIn * Math.PI) / 180) * 100) / 100;
+        else if (fn === "cos") fOut = Math.round(Math.cos((fIn * Math.PI) / 180) * 100) / 100;
+        fBag[fKey] = fOut;
+        break;
+      }
+      case "joinTextVariable": {
+        var jBag = variableBag(ctx, b.scope || "scene");
+        var jKey = (b.text || "").trim() || "texto";
+        var resolveJoinPart = function(part) {
+          if (!part) return "";
+          var s = String(part);
+          if (s.charAt(0) === "$" && s.length > 1) {
+            var vName = s.slice(1).trim();
+            var vVal = (ctx.scene.variables && ctx.scene.variables[vName] !== undefined)
+              ? ctx.scene.variables[vName]
+              : (ctx.self.variables ? ctx.self.variables[vName] : undefined);
+            if (vVal !== undefined) return String(vVal);
+          }
+          return s;
+        };
+        jBag[jKey] = resolveJoinPart(b.varA) + resolveJoinPart(b.varB);
+        break;
+      }
+      case "showVariable":
+      case "hideVariable": {
+        var vKey = (b.text || "").trim() || "variable";
+        var vVis = b.kind === "showVariable";
+        if (!ctx.scene.variableDefinitions) ctx.scene.variableDefinitions = [];
+        var vFound = null;
+        for (var vi = 0; vi < ctx.scene.variableDefinitions.length; vi++) {
+          if (ctx.scene.variableDefinitions[vi].name === vKey) {
+            vFound = ctx.scene.variableDefinitions[vi];
+            break;
+          }
+        }
+        if (vFound) vFound.visibleOnStage = vVis;
+        else {
+          ctx.scene.variableDefinitions.push({
+            id: uid(),
+            name: vKey,
+            scope: b.scope || "scene",
+            entityId: b.scope === "entity" ? ctx.self.id : undefined,
+            initialValue: 0,
+            visibleOnStage: vVis
+          });
+        }
+        break;
+      }
       default:
         if (customBlockHandlers[b.kind]) {
           try { customBlockHandlers[b.kind](b, ctx, runtimeApi); } catch (err) { console.error("[customBlock]", err); }
@@ -1428,6 +1792,36 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
 
   function blockList(blocks) {
     return Array.isArray(blocks) ? blocks.filter(function(b) { return b && typeof b.kind === "string"; }) : [];
+  }
+
+  function sensingConditionPasses(b, ctx) {
+    var cond = b.sensingCond || "touchingKind";
+    if (cond === "touchingKind") {
+      var kind = b.text || "player";
+      for (var i = 0; i < ctx.scene.entities.length; i++) {
+        var other = ctx.scene.entities[i];
+        if (other.id === ctx.self.id || other.x < -9000) continue;
+        if (kind !== "any" && other.kind !== kind) continue;
+        if (intersects(ctx.self, other)) return true;
+      }
+      return false;
+    }
+    if (cond === "touchingEdge") {
+      var e = ctx.self;
+      return e.x <= 2 || e.x + e.w >= ctx.scene.width - 2 || e.y <= 2 || e.y + e.h >= ctx.scene.height - 2;
+    }
+    if (cond === "keyPressed") {
+      var k = b.sensingKey || "jump";
+      return !!(ctx.input && ctx.input[k]);
+    }
+    if (cond === "distanceLt") {
+      var tgt = findFirstOfKind(ctx.scene, b.text || "player");
+      if (!tgt) return false;
+      var dx = (tgt.x + tgt.w / 2) - (ctx.self.x + ctx.self.w / 2);
+      var dy = (tgt.y + tgt.h / 2) - (ctx.self.y + ctx.self.h / 2);
+      return Math.hypot(dx, dy) <= (b.value !== undefined ? b.value : 120);
+    }
+    return false;
   }
 
   function execFrames(stack, ctx, now, suspend) {
@@ -1455,7 +1849,13 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
       if (block.kind === "if") {
         var v = block.value || 0;
         var pass = (block.cond === "scoreGte" && ctx.state.score >= v) || (block.cond === "scoreLte" && ctx.state.score <= v);
-        if (pass) stack.push({ blocks: blockList(block.thenBlocks), index: 0, repeatLeft: 1 });
+        var ifBranch = pass ? block.thenBlocks : block.elseBlocks;
+        if (ifBranch && ifBranch.length) stack.push({ blocks: blockList(ifBranch), index: 0, repeatLeft: 1 });
+        continue;
+      }
+      if (block.kind === "ifSensing") {
+        var sBranch = sensingConditionPasses(block, ctx) ? block.thenBlocks : block.elseBlocks;
+        if (sBranch && sBranch.length) stack.push({ blocks: blockList(sBranch), index: 0, repeatLeft: 1 });
         continue;
       }
       if (block.kind === "ifVariable") {
@@ -1467,6 +1867,14 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
       if (block.kind === "repeat") {
         var amount = Math.min(100, Math.max(0, Math.floor(block.repeat !== undefined ? block.repeat : (block.value !== undefined ? block.value : 1))));
         if (amount > 0) stack.push({ blocks: blockList(block.thenBlocks), index: 0, repeatLeft: amount });
+        continue;
+      }
+      if (block.kind === "repeatUntilVariable") {
+        var curU = variableBag(ctx, block.scope)[(block.text || "").trim() || "variable"];
+        if (!variablePasses(curU, block.operator, block.value || 0)) {
+          var innerU = blockList(block.thenBlocks);
+          if (innerU.length) stack.push({ blocks: innerU, index: 0, repeatLeft: 1 });
+        }
         continue;
       }
       execBlock(block, ctx);
@@ -1539,6 +1947,8 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
             other: other,
             scene: scene,
             state: state,
+            input: input,
+            clock: clock,
             hooks: hooks,
             emitMessage: function(msg) { messages.add(msg); }
           };
@@ -1548,6 +1958,24 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
             clock,
             function(stack, until) { suspended.set(key, { stack: stack, until: until, entityId: self.id, otherId: other ? other.id : undefined }); }
           );
+        }
+
+        // Inicializar definiciones de variables de Scratch al empezar la escena
+        if (clock === dt && Array.isArray(scene.variableDefinitions)) {
+          if (!scene.variables) scene.variables = {};
+          for (var vdi = 0; vdi < scene.variableDefinitions.length; vdi++) {
+            var vd = scene.variableDefinitions[vdi];
+            if (!vd || !vd.name) continue;
+            if (vd.scope === "entity" && vd.entityId) {
+              var vent = entityById(scene, vd.entityId);
+              if (vent) {
+                if (!vent.variables) vent.variables = {};
+                if (vent.variables[vd.name] === undefined) vent.variables[vd.name] = vd.initialValue !== undefined ? vd.initialValue : 0;
+              }
+            } else {
+              if (scene.variables[vd.name] === undefined) scene.variables[vd.name] = vd.initialValue !== undefined ? vd.initialValue : 0;
+            }
+          }
         }
 
         var live = scene.entities;
@@ -1721,110 +2149,244 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     ctx.closePath();
   }
 
-  function drawChibiCharacter(ctx, x, y, w, h, color, facing) {
-    ctx.save();
-    ctx.translate(x, y);
+  function shadeColor(hex, amount) {
+    var str = String(hex || "#38bdf8").trim();
+    var match = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(str);
+    if (!match) return str;
+    var body = match[1];
+    if (body.length === 3) {
+      body = body.charAt(0) + body.charAt(0) + body.charAt(1) + body.charAt(1) + body.charAt(2) + body.charAt(2);
+    }
+    var n = parseInt(body, 16);
+    var r = (n >> 16) & 255;
+    var g = (n >> 8) & 255;
+    var b = n & 255;
+    var mix = function(v) {
+      return Math.round(amount >= 0 ? v + (255 - v) * amount : v * (1 + amount));
+    };
+    return "rgb(" + mix(r) + ", " + mix(g) + ", " + mix(b) + ")";
+  }
+
+  function drawChibiCharacter(ctx, x, y, w, h, color, facing, blinking) {
     var c = color || "#38bdf8";
-    var r = Math.min(w, h) * 0.32;
-    var footH = Math.max(4, h * 0.11);
-    var bodyH = h - footH * 0.6;
+    var radius = Math.min(6, w / 2, h / 2);
 
-    var footW = Math.max(6, w * 0.24);
-    ctx.fillStyle = "#0f172a";
-    roundRect(ctx, w * 0.18, h - footH, footW, footH, 2);
-    ctx.fill();
-    roundRect(ctx, w - w * 0.18 - footW, h - footH, footW, footH, 2);
-    ctx.fill();
-
-    var grad = ctx.createLinearGradient(0, 0, 0, bodyH);
-    grad.addColorStop(0, "#7dd3fc");
-    grad.addColorStop(0.55, c);
-    grad.addColorStop(1, "#0284c7");
-    ctx.fillStyle = grad;
-    roundRect(ctx, 0, 0, w, bodyH, r);
+    // 1 · Cuerpo: degradado vertical (claro → color → oscuro) mantiene la píldora.
+    var body = ctx.createLinearGradient(x, y, x, y + h);
+    body.addColorStop(0, shadeColor(c, 0.4));
+    body.addColorStop(0.5, c);
+    body.addColorStop(1, shadeColor(c, -0.28));
+    ctx.fillStyle = body;
+    roundRect(ctx, x, y, w, h, radius);
     ctx.fill();
 
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = "#0f172a";
-    roundRect(ctx, 0, 0, w, bodyH, r);
-    ctx.stroke();
-
-    ctx.fillStyle = "rgba(255,255,255,0.35)";
-    roundRect(ctx, w * 0.14, bodyH * 0.08, w * 0.72, Math.max(3, bodyH * 0.14), r * 0.4);
+    // 2 · Volumen: brillo arriba-izquierda y sombra abajo-derecha.
+    var gloss = ctx.createLinearGradient(x, y, x + w, y + h);
+    gloss.addColorStop(0, "rgba(255,255,255,0.45)");
+    gloss.addColorStop(0.42, "rgba(255,255,255,0.05)");
+    gloss.addColorStop(1, "rgba(0,0,0,0.12)");
+    ctx.fillStyle = gloss;
+    roundRect(ctx, x, y, w, h, radius);
     ctx.fill();
 
+    // 3 · Cabeza chibi: la mitad superior un poco más clara (proporción de bebé).
+    var headY = y + h * 0.08;
+    var headH = h * 0.5;
+    var head = ctx.createLinearGradient(x, headY, x, headY + headH);
+    head.addColorStop(0, "rgba(255,255,255,0.24)");
+    head.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = head;
+    roundRect(ctx, x + w * 0.08, headY, w * 0.84, headH, headH / 2);
+    ctx.fill();
+
+    // 4 · Ojitos: grandes, con iris y brillo; parpadean cada 4 s.
+    var isBlinking = blinking !== undefined ? !!blinking : ((performance.now() / 1000) % 4 > 3.82);
+    var eyeW = Math.max(6, w * 0.2);
+    var eyeH = Math.max(6, h * 0.15);
+    var eyeY = headY + headH * 0.42;
+    var eyeGap = w * 0.16;
+    var leftEye = x + w / 2 - eyeGap - eyeW / 2;
+    var rightEye = x + w / 2 + eyeGap - eyeW / 2;
     var dir = facing === -1 ? -1 : 1;
-    var shift = dir * w * 0.06;
-    var eyeY = bodyH * 0.42;
-    var eyeSpacing = w * 0.2;
-    var cx = w / 2 + shift;
+    var look = dir * Math.min(1.2, w * 0.03);
 
-    var eyeW = Math.max(3, w * 0.11);
-    var eyeH = Math.max(4, bodyH * 0.16);
-    var sides = [-1, 1];
-    for (var si = 0; si < sides.length; si++) {
-      var ex = cx + sides[si] * eyeSpacing;
+    var drawEye = function(ex) {
+      if (isBlinking) {
+        ctx.strokeStyle = "rgba(15,23,42,0.6)";
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(ex, eyeY + eyeH / 2);
+        ctx.lineTo(ex + eyeW, eyeY + eyeH / 2);
+        ctx.stroke();
+        return;
+      }
       ctx.fillStyle = "#f8fafc";
-      ctx.beginPath();
-      ctx.ellipse(ex, eyeY, eyeW * 0.7, eyeH * 0.65, 0, 0, Math.PI * 2);
+      roundRect(ctx, ex, eyeY, eyeW, eyeH, eyeW / 2);
       ctx.fill();
+      var iris = eyeH * 0.4;
+      var cx = ex + eyeW / 2 + look;
+      var cy = eyeY + eyeH / 2;
       ctx.fillStyle = "#0f172a";
       ctx.beginPath();
-      ctx.ellipse(ex + dir * 0.8, eyeY + 0.5, eyeW * 0.45, eyeH * 0.45, 0, 0, Math.PI * 2);
+      ctx.arc(cx, cy, iris, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "#ffffff";
+      ctx.fillStyle = "rgba(255,255,255,0.92)";
       ctx.beginPath();
-      ctx.arc(ex - 0.8, eyeY - eyeH * 0.2, Math.max(1, eyeW * 0.22), 0, Math.PI * 2);
+      ctx.arc(cx - iris * 0.38, cy - iris * 0.42, iris * 0.36, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    drawEye(leftEye);
+    drawEye(rightEye);
+
+    // 5 · Mejillas: refuerzan el look chibi.
+    ctx.fillStyle = "rgba(244,114,182,0.3)";
+    var cheekXs = [x + w * 0.2, x + w * 0.8];
+    for (var ci = 0; ci < cheekXs.length; ci++) {
+      ctx.beginPath();
+      ctx.ellipse(cheekXs[ci], eyeY + eyeH * 0.95, w * 0.11, h * 0.045, 0, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    ctx.fillStyle = "rgba(244,114,182,0.55)";
-    ctx.beginPath();
-    ctx.ellipse(cx - eyeSpacing * 1.35, eyeY + eyeH * 0.55, eyeW * 0.55, eyeH * 0.25, 0, 0, Math.PI * 2);
+    // 6 · Piececitos sutiles.
+    var footH = Math.min(6, h * 0.09);
+    ctx.fillStyle = "rgba(0,0,0,0.16)";
+    roundRect(ctx, x + w * 0.12, y + h - footH, w * 0.2, footH, 2.5);
     ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(cx + eyeSpacing * 1.35, eyeY + eyeH * 0.55, eyeW * 0.55, eyeH * 0.25, 0, 0, Math.PI * 2);
+    roundRect(ctx, x + w * 0.68, y + h - footH, w * 0.2, footH, 2.5);
     ctx.fill();
+  }
 
-    ctx.restore();
+  // --- OffscreenCanvas / Pre-Rendered Procedural Sprite Cache ---
+  var proceduralSpriteCache = new Map();
+  var SPRITE_CACHE_DPR = 2;
+
+  function createBufferCanvas(w, h) {
+    if (typeof OffscreenCanvas !== "undefined") {
+      try { return new OffscreenCanvas(w, h); } catch (e) {}
+    }
+    var c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    return c;
+  }
+
+  function getCachedProceduralSprite(e, visualEffects, blinking) {
+    var w = Math.max(4, Math.round(e.w || 40));
+    var h = Math.max(4, Math.round(e.h || 40));
+    if (w > 512 || h > 512) return null;
+    var color = e.color || "#38bdf8";
+    var isGoalFlag = e.kind === "goal" && !!e.goal;
+    var effFacing = ((e.facing === -1) !== !!e.flipX) ? -1 : 1;
+    var facingKey = e.kind === "player" ? effFacing : 0;
+    var blinkKey = e.kind === "player" && blinking ? 1 : 0;
+    var fxKey = visualEffects ? 1 : 0;
+    var key = e.kind + "|" + w + "|" + h + "|" + color + "|" + (isGoalFlag ? 1 : 0) + "|" + facingKey + "|" + blinkKey + "|" + fxKey;
+    var cached = proceduralSpriteCache.get(key);
+    if (cached) return cached;
+
+    if (proceduralSpriteCache.size > 240) {
+      proceduralSpriteCache.clear();
+    }
+
+    var pad = isGoalFlag ? 26 : (visualEffects ? 16 : 4);
+    var logicalW = w + pad * 2;
+    var logicalH = h + pad * 2;
+    var buf = createBufferCanvas(Math.ceil(logicalW * SPRITE_CACHE_DPR), Math.ceil(logicalH * SPRITE_CACHE_DPR));
+    var bctx = buf.getContext("2d");
+    if (!bctx) return null;
+    bctx.scale(SPRITE_CACHE_DPR, SPRITE_CACHE_DPR);
+    bctx.translate(pad, pad);
+
+    if (visualEffects) {
+      bctx.shadowColor = color;
+      bctx.shadowBlur = e.kind === "coin" ? 10 : isGoalFlag ? 12 : 4;
+    }
+    bctx.fillStyle = color;
+    if (e.kind === "coin") {
+      bctx.beginPath();
+      bctx.arc(w / 2, h / 2, w / 2, 0, Math.PI * 2);
+      bctx.fill();
+    } else if (isGoalFlag) {
+      bctx.fillStyle = "rgba(125,211,252,0.3)";
+      bctx.fillRect(0, 0, w, h);
+      bctx.fillStyle = color;
+      bctx.fillRect(w / 2 - 2, 0, 4, h);
+      bctx.beginPath();
+      bctx.moveTo(w / 2 + 2, 4);
+      bctx.lineTo(w / 2 + 22, 12);
+      bctx.lineTo(w / 2 + 2, 20);
+      bctx.closePath();
+      bctx.fill();
+    } else if (e.kind === "player") {
+      roundRect(bctx, 0, 0, w, h, 6);
+      bctx.fill();
+      bctx.shadowBlur = 0;
+      drawChibiCharacter(bctx, 0, 0, w, h, color, facingKey || 1, !!blinking);
+    } else {
+      var r = e.kind === "platform" ? 4 : 6;
+      roundRect(bctx, 0, 0, w, h, r);
+      bctx.fill();
+    }
+
+    var entry = { canvas: buf, pad: pad, logicalW: logicalW, logicalH: logicalH };
+    proceduralSpriteCache.set(key, entry);
+    return entry;
   }
 
   function drawEntity(ctx, e, time, visualEffects) {
-    ctx.save();
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
     var rot = ((e.rotation || 0) * Math.PI) / 180;
-    if (rot) {
-      var cx = e.x + e.w / 2;
-      var cy = e.y + e.h / 2;
-      ctx.translate(cx, cy);
-      ctx.rotate(rot);
-      ctx.translate(-cx, -cy);
-    }
-    var flip = (e.facing === -1) !== !!e.flipX;
-    if (flip) {
-      ctx.translate(e.x + e.w, e.y);
-      ctx.scale(-1, 1);
-    } else {
-      ctx.translate(e.x, e.y);
-    }
-    var animImg = currentFrameRenderable(e, time);
-    function drawFit(img) {
+    var animImg = (e.animations && e.animations.length) ? currentFrameRenderable(e, time) : null;
+    var texImg = (!animImg && e.texture) ? getRenderableImage(e.texture) : null;
+    var img = animImg || texImg;
+
+    if (img) {
+      ctx.save();
+      if (rot) {
+        var cx = e.x + e.w / 2;
+        var cy = e.y + e.h / 2;
+        ctx.translate(cx, cy);
+        ctx.rotate(rot);
+        ctx.translate(-cx, -cy);
+      }
+      var flip = (e.facing === -1) !== !!e.flipX;
+      if (flip) {
+        ctx.translate(e.x + e.w, e.y);
+        ctx.scale(-1, 1);
+      } else {
+        ctx.translate(e.x, e.y);
+      }
       var fit = e.textureFit || "stretch";
-      if (fit === "stretch") { ctx.drawImage(img, 0, 0, e.w, e.h); return; }
-      var sa = img.width / img.height;
-      var da = e.w / e.h;
-      var cover = fit === "cover" ? sa > da : sa < da;
-      var dw = cover ? e.h * sa : e.w;
-      var dh = cover ? e.h : e.w / sa;
-      ctx.drawImage(img, (e.w - dw) / 2, (e.h - dh) / 2, dw, dh);
+      if (fit === "stretch") {
+        ctx.drawImage(img, 0, 0, e.w, e.h);
+      } else {
+        var sa = img.width / img.height;
+        var da = e.w / e.h;
+        var cover = fit === "cover" ? sa > da : sa < da;
+        var dw = cover ? e.h * sa : e.w;
+        var dh = cover ? e.h : e.w / sa;
+        ctx.drawImage(img, (e.w - dw) / 2, (e.h - dh) / 2, dw, dh);
+      }
+      ctx.restore();
+      return;
     }
-    if (animImg) { drawFit(animImg); ctx.restore(); return; }
-    if (e.texture) {
-      var img = getRenderableImage(e.texture);
-      if (img) { drawFit(img); ctx.restore(); return; }
+
+    var isBlinking = e.kind === "player" ? ((performance.now() / 1000) % 4 > 3.82) : false;
+    var cached = getCachedProceduralSprite(e, visualEffects, isBlinking);
+    if (cached) {
+      if (rot) {
+        ctx.save();
+        var rcx2 = e.x + e.w / 2;
+        var rcy2 = e.y + e.h / 2;
+        ctx.translate(rcx2, rcy2);
+        ctx.rotate(rot);
+        ctx.drawImage(cached.canvas, -e.w / 2 - cached.pad, -e.h / 2 - cached.pad, cached.logicalW, cached.logicalH);
+        ctx.restore();
+      } else {
+        ctx.drawImage(cached.canvas, e.x - cached.pad, e.y - cached.pad, cached.logicalW, cached.logicalH);
+      }
+      return;
     }
-    ctx.restore();
+
     ctx.save();
     if (rot) {
       var rcx = e.x + e.w / 2;
@@ -1835,14 +2397,14 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     }
     if (visualEffects) {
       ctx.shadowColor = e.color;
-      ctx.shadowBlur = e.kind === "coin" ? 10 : e.kind === "goal" ? 12 : 4;
+      ctx.shadowBlur = e.kind === "coin" ? 10 : (e.kind === "goal" && e.goal) ? 12 : 4;
     }
     ctx.fillStyle = e.color;
     if (e.kind === "coin") {
       ctx.beginPath();
       ctx.arc(e.x + e.w / 2, e.y + e.h / 2, e.w / 2, 0, Math.PI * 2);
       ctx.fill();
-    } else if (e.kind === "goal") {
+    } else if (e.kind === "goal" && e.goal) {
       ctx.fillStyle = "rgba(125,211,252,0.3)";
       ctx.fillRect(e.x, e.y, e.w, e.h);
       ctx.fillStyle = e.color;
@@ -1854,8 +2416,11 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
       ctx.closePath();
       ctx.fill();
     } else if (e.kind === "player") {
+      roundRect(ctx, e.x, e.y, e.w, e.h, 6);
+      ctx.fill();
       ctx.shadowBlur = 0;
-      drawChibiCharacter(ctx, e.x, e.y, e.w, e.h, e.color, e.facing || 1);
+      var effFacing2 = ((e.facing === -1) !== !!e.flipX) ? -1 : 1;
+      drawChibiCharacter(ctx, e.x, e.y, e.w, e.h, e.color, effFacing2, isBlinking);
     } else {
       var r = e.kind === "platform" ? 4 : 6;
       roundRect(ctx, e.x, e.y, e.w, e.h, r);
@@ -2253,7 +2818,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
   }
 
   canvas.addEventListener("pointerdown", function(ev) {
-    var rect = canvas.getBoundingClientRect();
+    var rect = canvasRect || canvas.getBoundingClientRect();
     var sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
     var b = hitUIButton(sx, sy);
     if (b) {
@@ -2275,7 +2840,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
   canvas.addEventListener("pointermove", function(ev) {
     var d = activePointers.get(ev.pointerId);
     if (!d || d.kind !== "joy") return;
-    var rect = canvas.getBoundingClientRect();
+    var rect = canvasRect || canvas.getBoundingClientRect();
     var sx = ev.clientX - rect.left, sy = ev.clientY - rect.top;
     applyJoystick(d.el.id, sx - d.cx, sy - d.cy, d.r);
   });
@@ -2292,20 +2857,37 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
 
   // --- Resize & Particle Helpers ---
   var cssW = 0, cssH = 0;
+  var canvasRect = null;
+  var MAX_PARTICLES = 360;
   function resize() {
-    var dpr = Math.min(window.devicePixelRatio || 1, 2.5);
-    cssW = Math.max(1, canvas.clientWidth || window.innerWidth);
-    cssH = Math.max(1, canvas.clientHeight || window.innerHeight);
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvasRect = canvas.getBoundingClientRect();
+    cssW = Math.max(1, Math.round(canvasRect.width) || canvas.clientWidth || window.innerWidth);
+    cssH = Math.max(1, Math.round(canvasRect.height) || canvas.clientHeight || window.innerHeight);
     var nextW = Math.round(cssW * dpr);
     var nextH = Math.round(cssH * dpr);
     if (canvas.width !== nextW) canvas.width = nextW;
     if (canvas.height !== nextH) canvas.height = nextH;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
+    ctx.imageSmoothingQuality = "medium";
   }
   resize();
   window.addEventListener("resize", resize);
+  if (typeof ResizeObserver !== "undefined") {
+    try {
+      var ro = new ResizeObserver(resize);
+      ro.observe(canvas);
+    } catch (e) {}
+  }
+
+  function pushParticle(p) {
+    if (particles.length >= MAX_PARTICLES) {
+      particles[Math.floor(Math.random() * MAX_PARTICLES)] = p;
+    } else {
+      particles.push(p);
+    }
+  }
 
   function flushParticles() {
     var list = state.particles || [];
@@ -2315,10 +2897,10 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
       for (var j = 0; j < n; j++) {
         var a = Math.random() * Math.PI * 2;
         var s = 60 + Math.random() * 140;
-        particles.push({ x: p.x, y: p.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 40, life: 0.6, max: 0.6, color: p.color, size: 3, gravity: 400 });
+        pushParticle({ x: p.x, y: p.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 40, life: 0.6, max: 0.6, color: p.color, size: 3, gravity: 400 });
       }
     }
-    if (list.length) state.particles = [];
+    if (list.length) state.particles.length = 0;
   }
 
   function tickEmitters(dt) {
@@ -2331,7 +2913,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
         em._acc -= 1;
         var dir = ((em.direction || 0) + (Math.random() - 0.5) * (em.spread || 0)) * Math.PI / 180;
         var sp = em.speed || 80;
-        particles.push({
+        pushParticle({
           x: e.x + e.w / 2,
           y: e.y + e.h / 2,
           vx: Math.cos(dir) * sp,
@@ -2346,10 +2928,15 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     }
   }
 
-  function draw() {
-    var W = cssW || canvas.clientWidth;
-    var H = cssH || canvas.clientHeight;
-    drawList = sortedForRender(work).filter(function(e) { return !isOnHiddenLayer(work, e); });
+  var lastEntityCount = work.entities.length;
+  function draw(nowMs) {
+    var W = cssW || 800;
+    var H = cssH || 600;
+    if (drawListDirty || work.entities.length !== lastEntityCount) {
+      drawList = sortedForRender(work);
+      lastEntityCount = work.entities.length;
+      drawListDirty = false;
+    }
     ctx.fillStyle = work.bg || "#0b1e3f";
     ctx.fillRect(0, 0, W, H);
 
@@ -2382,16 +2969,19 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
 
     ctx.strokeStyle = "rgba(56,189,248,0.10)";
     ctx.lineWidth = 1;
-    var off = -state.cameraX * 0.4;
+    var off = (-state.cameraX * 0.4) % 40;
+    if (off < 0) off += 40;
     ctx.beginPath();
-    for (var gx = (off % 40); gx < W; gx += 40) { ctx.moveTo(gx, 0); ctx.lineTo(gx, H); }
+    for (var gx = off; gx < W; gx += 40) { ctx.moveTo(gx, 0); ctx.lineTo(gx, H); }
     for (var gy = 0; gy < H; gy += 40) { ctx.moveTo(0, gy); ctx.lineTo(W, gy); }
     ctx.stroke();
 
+    var isVerticalCam = CONFIG.cameraOrientation === "vertical";
+    var VIEW_W = 540;
     var VIEW_H = 700;
-    var scale = H / VIEW_H;
-    var viewW = W / scale;
-    var viewH = VIEW_H;
+    var scale = isVerticalCam ? (W / VIEW_W) : (H / VIEW_H);
+    var viewW = isVerticalCam ? VIEW_W : (W / scale);
+    var viewH = isVerticalCam ? (H / scale) : VIEW_H;
     var player = null;
     for (var pi = 0; pi < work.entities.length; pi++) {
       if (work.entities[pi].controllable) { player = work.entities[pi]; break; }
@@ -2415,25 +3005,59 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     ctx.scale(scale, scale);
     ctx.translate(-camX, -camY);
 
-    var tSec = performance.now() / 1000;
+    var cullMinX = camX - 96;
+    var cullMaxX = camX + viewW + 96;
+    var cullMinY = camY - 96;
+    var cullMaxY = camY + viewH + 96;
+
+    var tSec = (nowMs || performance.now()) / 1000;
     var visualEffects = W >= 700;
     for (var di = 0; di < drawList.length; di++) {
       var e = drawList[di];
       if (e.visible === false || e.x < -9000) continue;
-      var la = layerOpacityFor(work, e);
+      if (e.x + e.w < cullMinX || e.x > cullMaxX || e.y + e.h < cullMinY || e.y > cullMaxY) continue;
+      var la = e._layerOpacity !== undefined ? e._layerOpacity : 1;
       var a = (e.opacity !== undefined ? e.opacity : 1) * la;
-      if (e.controllable && state.invulnT > 0 && Math.floor(state.invulnT * 16) % 2 === 0) {
+      if (e.controllable && state.invulnT > 0 && ((state.invulnT * 16) | 0) % 2 === 0) {
         ctx.globalAlpha = 0.4 * la;
       } else if (a !== 1) {
         ctx.globalAlpha = a;
       }
       drawEntity(ctx, e, tSec, visualEffects);
-      ctx.globalAlpha = 1;
+      if (ctx.globalAlpha !== 1) ctx.globalAlpha = 1;
+
+      // Bocadillos de texto / pensamiento estilo Scratch («decir» / «pensar»)
+      if (e._bubbleText) {
+        if (e._bubbleUntil && e._bubbleUntil > 0 && state.time >= e._bubbleUntil) {
+          e._bubbleText = null;
+          e._bubbleUntil = 0;
+        } else {
+          ctx.save();
+          ctx.font = "700 13px Inter, system-ui, sans-serif";
+          var bTxt = String(e._bubbleText);
+          var tw = Math.min(220, Math.max(48, ctx.measureText(bTxt).width + 20));
+          var bh = 30;
+          var bx = e.x + e.w / 2 - tw / 2;
+          var by = e.y - bh - 12;
+          ctx.fillStyle = "#ffffff";
+          ctx.strokeStyle = e._bubbleKind === "think" ? "#9966FF" : "#4C97FF";
+          ctx.lineWidth = 2;
+          roundRect(ctx, bx, by, tw, bh, 10);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = "#0f172a";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(bTxt, bx + tw / 2, by + bh / 2, tw - 14);
+          ctx.restore();
+        }
+      }
     }
 
     flushParticles();
     for (var pti = particles.length - 1; pti >= 0; pti--) {
       var pt = particles[pti];
+      if (pt.x < cullMinX || pt.x > cullMaxX || pt.y < cullMinY || pt.y > cullMaxY) continue;
       ctx.globalAlpha = Math.max(0, pt.life / pt.max);
       ctx.fillStyle = pt.color;
       ctx.fillRect(pt.x - pt.size / 2, pt.y - pt.size / 2, pt.size, pt.size);
@@ -2447,6 +3071,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
       for (var hi = 0; hi < work.entities.length; hi++) {
         var he = work.entities[hi];
         if (he.x < -9000) continue;
+        if (he.x + he.w < cullMinX || he.x > cullMaxX || he.y + he.h < cullMinY || he.y > cullMaxY) continue;
         var hb = he.hitbox;
         if (hb) ctx.strokeRect(he.x + hb.x, he.y + hb.y, hb.w, hb.h);
         else ctx.strokeRect(he.x, he.y, he.w, he.h);
@@ -2476,7 +3101,49 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
       }
     }
 
-    var tick = performance.now() / 16;
+    // Monitores de Variables de Scratch en pantalla (visibleOnStage)
+    var varDefs = Array.isArray(work.variableDefinitions) ? work.variableDefinitions : [];
+    var wy = CONFIG.showHUD !== false ? 56 : 14;
+    for (var vwi = 0; vwi < varDefs.length; vwi++) {
+      var vDef = varDefs[vwi];
+      if (!vDef || !vDef.name || vDef.visibleOnStage === false) continue;
+      var vVal = vDef.initialValue !== undefined ? vDef.initialValue : 0;
+      if (vDef.scope === "entity" && vDef.entityId) {
+        var vEnt = entityById(work, vDef.entityId);
+        if (vEnt && vEnt.variables && vEnt.variables[vDef.name] !== undefined) {
+          vVal = vEnt.variables[vDef.name];
+        }
+      } else if (work.variables && work.variables[vDef.name] !== undefined) {
+        vVal = work.variables[vDef.name];
+      }
+      ctx.save();
+      ctx.font = "700 12px Inter, system-ui, sans-serif";
+      var lblStr = String(vDef.name);
+      var valStr = String(vVal);
+      var lblW = Math.max(40, ctx.measureText(lblStr).width + 16);
+      var valW = Math.max(34, ctx.measureText(valStr).width + 16);
+      var boxW = lblW + valW + 8;
+      var boxH = 26;
+      ctx.fillStyle = "rgba(15,23,42,0.88)";
+      ctx.strokeStyle = "rgba(255,140,26,0.75)";
+      ctx.lineWidth = 1.5;
+      roundRect(ctx, 12, wy, boxW, boxH, 7);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#e2e8f0";
+      ctx.textBaseline = "middle";
+      ctx.fillText(lblStr, 20, wy + boxH / 2);
+      ctx.fillStyle = "#FF8C1A";
+      roundRect(ctx, 12 + lblW + 2, wy + 3, valW, boxH - 6, 5);
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "center";
+      ctx.fillText(valStr, 12 + lblW + 2 + valW / 2, wy + boxH / 2);
+      ctx.restore();
+      wy += boxH + 6;
+    }
+
+    var tick = (nowMs || performance.now()) / 16;
     var uiState = { score: state.score, lives: state.lives, time: state.time, timeLimit: work.timeLimit, startLives: work.startLives };
     var uiElements = work.ui || [];
     for (var uiIdx = 0; uiIdx < uiElements.length; uiIdx++) {
@@ -2522,7 +3189,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
         : kindOrPreset;
       var ent = Object.assign({}, cloneDeep(base), { id: uid(), x: 100, y: 100 }, overrides || {});
       work.entities.push(ent);
-      drawList = sortedForRender(work).filter(function(e) { return !isOnHiddenLayer(work, e); });
+      markDrawListDirty();
       return ent;
     },
     removeEntity: function(entityOrId) {
@@ -2607,6 +3274,26 @@ ${customJs}
       if (typeof msg.muted === "boolean") muted = msg.muted;
       if (typeof msg.music === "boolean") CONFIG.music = msg.music;
       if (msg.musicUrl !== undefined) CONFIG.musicUrl = msg.musicUrl;
+      if (typeof msg.showHUD === "boolean") CONFIG.showHUD = msg.showHUD;
+      if (typeof msg.showFPS === "boolean") {
+        CONFIG.showFPS = msg.showFPS;
+        fpsBadge.style.display = CONFIG.showFPS ? "block" : "none";
+      }
+      if (typeof msg.showHitboxes === "boolean") CONFIG.showHitboxes = msg.showHitboxes;
+      if (typeof msg.touchControls === "boolean") {
+        CONFIG.touchControls = msg.touchControls;
+        updateTouchControlsVisibility();
+      }
+      if (typeof msg.autoPause === "boolean") CONFIG.autoPause = msg.autoPause;
+      if (typeof msg.fpsCap === "number" && msg.fpsCap > 0) CONFIG.fpsCap = msg.fpsCap;
+      if (msg.cameraOrientation === "horizontal" || msg.cameraOrientation === "vertical") {
+        CONFIG.cameraOrientation = msg.cameraOrientation;
+        var rootEl = document.getElementById("game-root");
+        if (rootEl) {
+          rootEl.className = CONFIG.cameraOrientation === "vertical" ? "camera-vertical" : "camera-horizontal";
+        }
+        resize();
+      }
       syncAudioConfig();
     } else if (msg.type === "asternal:key") {
       if (msg.kind === "keydown") {
@@ -2627,25 +3314,39 @@ ${customJs}
     }
   });
 
-  // --- Hardware-Native Game Loop ---
-  // El bucle corre directamente con el requestAnimationFrame nativo del dispositivo,
-  // integrando la física con subpasos de alta precisión (máx 1/120 s) para que la
-  // respuesta y suavidad dependan únicamente de la potencia real del hardware.
+  // --- Hardware-Native + High-Precision 60 FPS Game Loop ---
+  // Combina requestAnimationFrame con un temporizador de alta resolución para garantizar
+  // 60 FPS reales incluso cuando WebKit/iOS (Modo Bajo Consumo o iframes blob anidados)
+  // limita requestAnimationFrame a 30 Hz.
   var last = performance.now();
+  var lastTickMs = last;
   var frames = 0;
   var fpsT = last;
   var MAX_SUBSTEP = 1 / 120;
 
-  function loop(now) {
-    requestAnimationFrame(loop);
-    var elapsed = Math.min(0.1, Math.max(0, (now - last) / 1000));
+  function tickFrame(now, fromTimer) {
+    var targetFps = (CONFIG.fpsCap && CONFIG.fpsCap > 0) ? CONFIG.fpsCap : 60;
+    var targetIntervalMs = 1000 / targetFps;
+    var deltaMs = now - lastTickMs;
+
+    if (fromTimer) {
+      // Si rAF está corriendo a 60Hz nativos (< 22ms), dejamos que rAF lleve el ritmo.
+      // Si rAF fue estrangulado a 30Hz (~33.3ms), este tick intermedio dispara a los ~16.67ms.
+      if (deltaMs < targetIntervalMs - 1.2) return;
+    } else if (targetFps <= 30 && deltaMs < targetIntervalMs - 2.5) {
+      return;
+    }
+
+    lastTickMs = now;
+    var elapsed = Math.min(0.05, Math.max(0, (now - last) / 1000));
     last = now;
 
     if (!paused) {
       var remaining = elapsed;
+      var stepCap = Math.max(MAX_SUBSTEP, 1 / Math.max(60, targetFps));
       var steps = 0;
-      while (remaining > 1e-6 && steps < 8) {
-        var stepDt = Math.min(remaining, MAX_SUBSTEP);
+      while (remaining > 1e-4 && steps < 4) {
+        var stepDt = Math.min(remaining, stepCap);
         if (!state.win && !state.dead) {
           stepScene(work, input, state, stepDt, onGoalReached);
           scripts.step(work, state, input, hooks, stepDt);
@@ -2653,9 +3354,6 @@ ${customJs}
             if (typeof runtimeHooksList[ti].onTick === "function") {
               try { runtimeHooksList[ti].onTick(runtimeApi, stepDt); } catch (err) {}
             }
-          }
-          if (drawList.length !== work.entities.length) {
-            drawList = sortedForRender(work).filter(function(e) { return !isOnHiddenLayer(work, e); });
           }
         }
         if (shake.time > 0) shake.time = Math.max(0, shake.time - stepDt);
@@ -2666,7 +3364,10 @@ ${customJs}
           p.y += p.vy * stepDt;
           p.vy += p.gravity * stepDt;
           p.life -= stepDt;
-          if (p.life <= 0) particles.splice(i, 1);
+          if (p.life <= 0) {
+            particles[i] = particles[particles.length - 1];
+            particles.pop();
+          }
         }
         remaining -= stepDt;
         steps++;
@@ -2677,20 +3378,28 @@ ${customJs}
       });
     }
 
-    draw();
+    draw(now);
     updateEndOverlay();
     updateDialogOverlay();
 
     frames++;
     if (now - fpsT >= 500) {
-      var fps = Math.round((frames * 1000) / (now - fpsT));
+      var fps = Math.min(targetFps, Math.round((frames * 1000) / (now - fpsT)));
       fpsBadge.textContent = fps + " FPS";
       frames = 0;
       fpsT = now;
     }
   }
 
+  function loop(now) {
+    requestAnimationFrame(loop);
+    tickFrame(now, false);
+  }
+
   requestAnimationFrame(loop);
+  setInterval(function() {
+    if (!paused) tickFrame(performance.now(), true);
+  }, 4);
 })();
 </script>
 </body>
@@ -2795,6 +3504,9 @@ export function syncHtmlToProject(html: string, currentProject: Project): Projec
     ...(typeof cfg.touchControls === "boolean" ? { touchControls: cfg.touchControls } : {}),
     ...(typeof cfg.autoPause === "boolean" ? { autoPause: cfg.autoPause } : {}),
     ...(typeof cfg.showHitboxes === "boolean" ? { showHitboxes: cfg.showHitboxes } : {}),
+    ...(cfg.cameraOrientation === "horizontal" || cfg.cameraOrientation === "vertical"
+      ? { cameraOrientation: cfg.cameraOrientation }
+      : {}),
   };
 
   const prevRuntime = currentProject.customRuntime ?? {};
@@ -2866,17 +3578,18 @@ export function isLegacyGeneratedPlaceholderSvg(dataUrl: string | null | undefin
  * con las mismas dimensiones y colores que se ven en el editor y en el runtime.
  */
 export function entityToEditableSvgDataUrl(
-  entity: Pick<Entity, "kind" | "color" | "w" | "h" | "texture"> & { facing?: 1 | -1 },
+  entity: Pick<Entity, "kind" | "color" | "w" | "h" | "texture"> & { facing?: 1 | -1; goal?: boolean },
 ): string {
   if (entity.texture && entity.texture.trim() && !isLegacyGeneratedPlaceholderSvg(entity.texture)) {
     return entity.texture;
   }
+  const isGoalFlag = entity.kind === "goal" && entity.goal === true;
   const defaultSizes: Record<Entity["kind"], { w: number; h: number; color: string }> = {
     player: { w: 40, h: 56, color: "#38bdf8" },
     platform: { w: 40, h: 40, color: "#1e3a8a" },
     enemy: { w: 40, h: 40, color: "#f43f5e" },
     coin: { w: 22, h: 22, color: "#fbbf24" },
-    goal: { w: 36, h: 64, color: "#7dd3fc" },
+    goal: isGoalFlag ? { w: 36, h: 64, color: "#7dd3fc" } : { w: 40, h: 40, color: "#7dd3fc" },
     decor: { w: 64, h: 64, color: "#a78bfa" },
   };
   const preset = defaultSizes[entity.kind] ?? defaultSizes.platform;
@@ -2889,58 +3602,77 @@ export function entityToEditableSvgDataUrl(
   if (entity.kind === "coin") {
     const rad = r2(Math.min(w, h) / 2);
     inner = `<circle cx="${r2(w / 2)}" cy="${r2(h / 2)}" r="${rad}" fill="${color}"/>`;
-  } else if (entity.kind === "goal") {
+  } else if (isGoalFlag) {
     const midX = r2(w / 2);
     inner =
       `<rect x="0" y="0" width="${w}" height="${h}" fill="rgba(125,211,252,0.3)"/>` +
       `<rect x="${r2(midX - 2)}" y="0" width="4" height="${h}" fill="${color}"/>` +
       `<polygon points="${r2(midX + 2)},4 ${r2(midX + 22)},12 ${r2(midX + 2)},20" fill="${color}"/>`;
   } else if (entity.kind === "player") {
-    const r = r2(Math.min(w, h) * 0.32);
-    const footH = r2(Math.max(4, h * 0.11));
-    const bodyH = r2(h - footH * 0.6);
-    const footW = r2(Math.max(6, w * 0.24));
-    const leftFootX = r2(w * 0.18);
-    const rightFootX = r2(w - w * 0.18 - footW);
-    const footY = r2(h - footH);
-    const shineX = r2(w * 0.14);
-    const shineY = r2(bodyH * 0.08);
-    const shineW = r2(w * 0.72);
-    const shineH = r2(Math.max(3, bodyH * 0.14));
-    const shineR = r2(r * 0.4);
+    const radius = r2(Math.min(6, w / 2, h / 2));
+    const headY = r2(h * 0.08);
+    const headH = r2(h * 0.5);
+    const headX = r2(w * 0.08);
+    const headW = r2(w * 0.84);
+    const headR = r2(Math.min(headH / 2, headW / 2));
+
+    const eyeW = r2(Math.max(6, w * 0.2));
+    const eyeH = r2(Math.max(6, h * 0.15));
+    const eyeR = r2(Math.min(eyeW / 2, eyeH / 2));
+    const eyeY = r2(headY + headH * 0.42);
+    const eyeGap = w * 0.16;
+    const leftEye = r2(w / 2 - eyeGap - eyeW / 2);
+    const rightEye = r2(w / 2 + eyeGap - eyeW / 2);
     const dir = entity.facing === -1 ? -1 : 1;
-    const shift = dir * w * 0.06;
-    const eyeY = r2(bodyH * 0.42);
-    const eyeSpacing = w * 0.2;
-    const cx = w / 2 + shift;
-    const eyeW = Math.max(3, w * 0.11);
-    const eyeH = Math.max(4, bodyH * 0.16);
-    const exL = r2(cx - eyeSpacing);
-    const exR = r2(cx + eyeSpacing);
-    const glintR = r2(Math.max(1, eyeW * 0.22));
-    const glintY = r2(eyeY - eyeH * 0.2);
-    const cheekY = r2(eyeY + eyeH * 0.55);
-    const cheekRx = r2(eyeW * 0.55);
-    const cheekRy = r2(eyeH * 0.25);
+    const look = dir * Math.min(1.2, w * 0.03);
+    const iris = r2(eyeH * 0.4);
+    const cxL = r2(leftEye + eyeW / 2 + look);
+    const cxR = r2(rightEye + eyeW / 2 + look);
+    const cyEye = r2(eyeY + eyeH / 2);
+    const glintR = r2(iris * 0.36);
+    const glintXL = r2(cxL - iris * 0.38);
+    const glintXR = r2(cxR - iris * 0.38);
+    const glintY = r2(cyEye - iris * 0.42);
+
+    const cheekY = r2(eyeY + eyeH * 0.95);
+    const cheekRx = r2(w * 0.11);
+    const cheekRy = r2(h * 0.045);
+
+    const footH = r2(Math.min(6, h * 0.09));
+    const footW = r2(w * 0.2);
+    const footY = r2(h - footH);
+    const footR = r2(Math.min(2.5, footW / 2, footH / 2));
 
     inner =
-      `<defs><linearGradient id="chibiBody" x1="0" y1="0" x2="0" y2="${bodyH}" gradientUnits="userSpaceOnUse">` +
-      `<stop offset="0%" stop-color="#7dd3fc"/>` +
-      `<stop offset="55%" stop-color="${color}"/>` +
-      `<stop offset="100%" stop-color="#0284c7"/>` +
-      `</linearGradient></defs>` +
-      `<rect x="${leftFootX}" y="${footY}" width="${footW}" height="${footH}" rx="2" fill="#0f172a"/>` +
-      `<rect x="${rightFootX}" y="${footY}" width="${footW}" height="${footH}" rx="2" fill="#0f172a"/>` +
-      `<rect x="0.75" y="0.75" width="${r2(w - 1.5)}" height="${r2(bodyH - 1.5)}" rx="${r}" fill="url(#chibiBody)" stroke="#0f172a" stroke-width="1.5"/>` +
-      `<rect x="${shineX}" y="${shineY}" width="${shineW}" height="${shineH}" rx="${shineR}" fill="rgba(255,255,255,0.35)"/>` +
-      `<ellipse cx="${exL}" cy="${eyeY}" rx="${r2(eyeW * 0.7)}" ry="${r2(eyeH * 0.65)}" fill="#f8fafc"/>` +
-      `<ellipse cx="${r2(exL + dir * 0.8)}" cy="${r2(eyeY + 0.5)}" rx="${r2(eyeW * 0.45)}" ry="${r2(eyeH * 0.45)}" fill="#0f172a"/>` +
-      `<circle cx="${r2(exL - 0.8)}" cy="${glintY}" r="${glintR}" fill="#ffffff"/>` +
-      `<ellipse cx="${exR}" cy="${eyeY}" rx="${r2(eyeW * 0.7)}" ry="${r2(eyeH * 0.65)}" fill="#f8fafc"/>` +
-      `<ellipse cx="${r2(exR + dir * 0.8)}" cy="${r2(eyeY + 0.5)}" rx="${r2(eyeW * 0.45)}" ry="${r2(eyeH * 0.45)}" fill="#0f172a"/>` +
-      `<circle cx="${r2(exR - 0.8)}" cy="${glintY}" r="${glintR}" fill="#ffffff"/>` +
-      `<ellipse cx="${r2(cx - eyeSpacing * 1.35)}" cy="${cheekY}" rx="${cheekRx}" ry="${cheekRy}" fill="rgba(244,114,182,0.55)"/>` +
-      `<ellipse cx="${r2(cx + eyeSpacing * 1.35)}" cy="${cheekY}" rx="${cheekRx}" ry="${cheekRy}" fill="rgba(244,114,182,0.55)"/>`;
+      `<defs>` +
+      `<linearGradient id="chibiBody" x1="0" y1="0" x2="0" y2="${h}" gradientUnits="userSpaceOnUse">` +
+      `<stop offset="0%" stop-color="${shadeColor(color, 0.4)}"/>` +
+      `<stop offset="50%" stop-color="${color}"/>` +
+      `<stop offset="100%" stop-color="${shadeColor(color, -0.28)}"/>` +
+      `</linearGradient>` +
+      `<linearGradient id="chibiGloss" x1="0" y1="0" x2="${w}" y2="${h}" gradientUnits="userSpaceOnUse">` +
+      `<stop offset="0%" stop-color="rgba(255,255,255,0.45)"/>` +
+      `<stop offset="42%" stop-color="rgba(255,255,255,0.05)"/>` +
+      `<stop offset="100%" stop-color="rgba(0,0,0,0.12)"/>` +
+      `</linearGradient>` +
+      `<linearGradient id="chibiHead" x1="0" y1="${headY}" x2="0" y2="${r2(headY + headH)}" gradientUnits="userSpaceOnUse">` +
+      `<stop offset="0%" stop-color="rgba(255,255,255,0.24)"/>` +
+      `<stop offset="100%" stop-color="rgba(255,255,255,0)"/>` +
+      `</linearGradient>` +
+      `</defs>` +
+      `<rect x="0" y="0" width="${w}" height="${h}" rx="${radius}" fill="url(#chibiBody)"/>` +
+      `<rect x="0" y="0" width="${w}" height="${h}" rx="${radius}" fill="url(#chibiGloss)"/>` +
+      `<rect x="${headX}" y="${headY}" width="${headW}" height="${headH}" rx="${headR}" fill="url(#chibiHead)"/>` +
+      `<rect x="${leftEye}" y="${eyeY}" width="${eyeW}" height="${eyeH}" rx="${eyeR}" fill="#f8fafc"/>` +
+      `<circle cx="${cxL}" cy="${cyEye}" r="${iris}" fill="#0f172a"/>` +
+      `<circle cx="${glintXL}" cy="${glintY}" r="${glintR}" fill="rgba(255,255,255,0.92)"/>` +
+      `<rect x="${rightEye}" y="${eyeY}" width="${eyeW}" height="${eyeH}" rx="${eyeR}" fill="#f8fafc"/>` +
+      `<circle cx="${cxR}" cy="${cyEye}" r="${iris}" fill="#0f172a"/>` +
+      `<circle cx="${glintXR}" cy="${glintY}" r="${glintR}" fill="rgba(255,255,255,0.92)"/>` +
+      `<ellipse cx="${r2(w * 0.2)}" cy="${cheekY}" rx="${cheekRx}" ry="${cheekRy}" fill="rgba(244,114,182,0.3)"/>` +
+      `<ellipse cx="${r2(w * 0.8)}" cy="${cheekY}" rx="${cheekRx}" ry="${cheekRy}" fill="rgba(244,114,182,0.3)"/>` +
+      `<rect x="${r2(w * 0.12)}" y="${footY}" width="${footW}" height="${footH}" rx="${footR}" fill="rgba(0,0,0,0.16)"/>` +
+      `<rect x="${r2(w * 0.68)}" y="${footY}" width="${footW}" height="${footH}" rx="${footR}" fill="rgba(0,0,0,0.16)"/>`;
   } else {
     const rx = entity.kind === "platform" ? 4 : 6;
     inner = `<rect x="0" y="0" width="${w}" height="${h}" rx="${rx}" fill="${color}"/>`;
@@ -2969,6 +3701,16 @@ export function syncRuntimeAndTexturesToProject(
       }
       return ent;
     });
+    if (!nextEntities.some((ent) => isMainGoalEntity(ent))) {
+      entChanged = true;
+      nextEntities.push({
+        ...MAIN_GOAL_PRESET,
+        id: uid(),
+        x: Math.max(80, (sc.width || 1200) - 120),
+        y: Math.max(40, (sc.height || 660) - 124),
+        layerId: sc.layers?.[0]?.id ?? DEFAULT_LAYER_ID,
+      });
+    }
     const ensured = ensureSceneLayers(entChanged ? { ...sc, entities: nextEntities } : sc);
     if (ensured !== sc || entChanged) scenesChanged = true;
     return ensured;
@@ -3136,6 +3878,7 @@ export function buildProjectGameHtml(project: Project, embedded = true): string 
     touchControls: project.settings.touchControls ?? true,
     autoPause: project.settings.autoPause ?? true,
     showHitboxes: project.settings.showHitboxes ?? false,
+    cameraOrientation: project.settings.cameraOrientation ?? "horizontal",
     customRuntime: project.customRuntime,
     embedded,
   });

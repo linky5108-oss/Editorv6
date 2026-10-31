@@ -1,11 +1,11 @@
 import type { Project } from "./core";
-import { DEFAULT_SETTINGS, ensureSceneLayers, newProject, uid } from "./core";
+import { DEFAULT_LAYER_ID, DEFAULT_SETTINGS, MAIN_GOAL_PRESET, ensureSceneLayers, isMainGoalEntity, newProject, uid } from "./core";
 
 const LEGACY_KEY = "asternal:project";
 const INDEX_KEY = "asternal:projects:index";
 const CURRENT_KEY = "asternal:projects:current";
 const ITEM_PREFIX = "asternal:projects:item:";
-const FPS_60_MIGRATION_KEY = "asternal:fps60-migration:v2";
+const FPS_60_MIGRATION_KEY = "asternal:fps60-migration:v3";
 /**
  * Copias remotas (nube de Supabase o Google Drive) borradas en este dispositivo:
  * la sincronización no debe volver a bajarlas. Una sola lista para las dos,
@@ -98,7 +98,25 @@ function writeIndex(items: ProjectMeta[]) {
 
 function normalize(p: Project): Project {
   if (!p.scenes?.length) return newProject();
-  p.scenes = p.scenes.map((s) => ensureSceneLayers(s));
+  p.scenes = p.scenes.map((s) => {
+    const ensured = ensureSceneLayers(s);
+    if (!ensured.entities.some((e) => isMainGoalEntity(e))) {
+      return {
+        ...ensured,
+        entities: [
+          ...ensured.entities,
+          {
+            ...MAIN_GOAL_PRESET,
+            id: uid(),
+            x: Math.max(80, (ensured.width || 1200) - 120),
+            y: Math.max(40, (ensured.height || 660) - 124),
+            layerId: ensured.layers?.[0]?.id ?? DEFAULT_LAYER_ID,
+          },
+        ],
+      };
+    }
+    return ensured;
+  });
   if (!p.assets) p.assets = { sprites: [] };
   if (!p.assets.sprites) p.assets.sprites = [];
   p.settings = { ...DEFAULT_SETTINGS, ...(p.settings ?? {}) };

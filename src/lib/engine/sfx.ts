@@ -67,11 +67,13 @@ export interface CustomSound {
   name: string;
   /** dataURL o URL del archivo de audio del usuario. */
   url: string;
+  /** Categoría opcional: "music" (música) o "sfx" (sonido). */
+  category?: "music" | "sfx";
 }
 
 const SOUND_LIBRARY_KEY = "asternal:sounds";
 
-/** Lee la biblioteca de sonidos del usuario (vacia si no hay nada o falla). */
+/** Lee la biblioteca de sonidos y música del usuario (vacía si no hay nada o falla). */
 export function loadCustomSounds(): CustomSound[] {
   try {
     if (typeof localStorage === "undefined") return [];
@@ -89,7 +91,7 @@ export function loadCustomSounds(): CustomSound[] {
   }
 }
 
-/** Guarda la biblioteca de sonidos del usuario. */
+/** Guarda la biblioteca de sonidos y música del usuario. */
 export function saveCustomSounds(list: CustomSound[]) {
   try {
     if (typeof localStorage === "undefined") return;
@@ -98,15 +100,41 @@ export function saveCustomSounds(list: CustomSound[]) {
 }
 
 /**
- * Añade un sonido del usuario a la biblioteca (deduplicando por url) y la
+ * Añade un sonido o música del usuario a la biblioteca (deduplicando por url) y la
  * devuelve ya guardada.
  */
-export function addCustomSound(name: string, url: string, id = uid()): CustomSound[] {
-  const clean: CustomSound = { id, name: name.trim() || "sonido", url };
-  const rest = loadCustomSounds().filter(s => s.url !== url);
+export function addCustomSound(
+  name: string,
+  url: string,
+  id = uid(),
+  category: "music" | "sfx" = "sfx",
+): CustomSound[] {
+  const clean: CustomSound = {
+    id,
+    name: name.trim() || (category === "music" ? "música" : "sonido"),
+    url,
+    category,
+  };
+  const rest = loadCustomSounds().filter(s => s.url !== url && s.id !== id);
   const next = [...rest, clean];
   saveCustomSounds(next);
   return next;
+}
+
+/** Resuelve un id, nombre o URL contra la biblioteca local de audio. */
+export function resolveCustomAudioUrl(urlOrName?: string | null): string | null {
+  if (!urlOrName) return null;
+  const trimmed = urlOrName.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("data:") || trimmed.startsWith("blob:") || trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("/")) {
+    return trimmed;
+  }
+  const list = loadCustomSounds();
+  const lower = trimmed.toLowerCase();
+  const found = list.find(
+    s => s.id === trimmed || s.name.trim().toLowerCase() === lower || s.url === trimmed,
+  );
+  return found ? found.url : trimmed;
 }
 
 function uid() {
@@ -116,14 +144,14 @@ function uid() {
 let playing: HTMLAudioElement[] = [];
 
 /**
- * Reproduce un sonido del usuario. Es el único camino de reproducción de
- * efectos del editor/motor: sin archivo no suena nada (nunca un preset).
+ * Reproduce un sonido del usuario (por URL, id o nombre de la biblioteca).
  */
 export function playSoundUrl(url?: string | null): boolean {
-  if (muted || !url) return false;
+  const resolved = resolveCustomAudioUrl(url);
+  if (muted || !resolved) return false;
   try {
     if (typeof Audio === "undefined") return false;
-    const a = new Audio(url);
+    const a = new Audio(resolved);
     a.volume = Math.max(0, Math.min(1, volume));
     const maybe = a.play();
     if (maybe && typeof maybe.catch === "function") maybe.catch(() => { /* autoplay bloqueado */ });
@@ -161,21 +189,22 @@ let musicEl: HTMLAudioElement | null = null;
 let musicSrc: string | null = null;
 
 export function startMusic(url?: string | null) {
+  const resolved = resolveCustomAudioUrl(url);
   if (muted) { stopMusic(); return; }
-  if (!url) { stopMusic(); return; }
-  if (musicEl && musicSrc === url) {
+  if (!resolved) { stopMusic(); return; }
+  if (musicEl && musicSrc === resolved) {
     musicEl.volume = volume;
     if (musicEl.paused) musicEl.play().catch(() => {});
     return;
   }
   stopMusic();
   try {
-    const a = new Audio(url);
+    const a = new Audio(resolved);
     a.loop = true;
     a.volume = volume;
     a.play().catch(() => {});
     musicEl = a;
-    musicSrc = url;
+    musicSrc = resolved;
   } catch { /* ignore */ }
 }
 

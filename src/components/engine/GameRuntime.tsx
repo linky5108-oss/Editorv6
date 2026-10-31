@@ -26,6 +26,7 @@ interface Props {
   touchControls?: boolean;
   autoPause?: boolean;
   showHitboxes?: boolean;
+  cameraOrientation?: "horizontal" | "vertical";
   embedded?: boolean;
   onExit: () => void;
 }
@@ -53,6 +54,7 @@ export function GameRuntime({
   touchControls = true,
   autoPause = true,
   showHitboxes = false,
+  cameraOrientation = "horizontal",
   embedded = true,
   onExit,
 }: Props) {
@@ -79,16 +81,17 @@ export function GameRuntime({
       touchControls,
       autoPause,
       showHitboxes,
+      cameraOrientation,
       embedded,
     });
     setBlobUrl(bundle.url);
     return () => {
       bundle.revoke();
     };
-    // Solo recompila el documento HTML5 si cambia la escena, el runtime o los ajustes estructurales.
-    // El audio se sincroniza en caliente por postMessage.
+    // Solo recompila el documento HTML5 si cambia la escena, el runtime o los recursos base.
+    // Los ajustes de visualización, cámara y audio se sincronizan en caliente por postMessage.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scene, scenes, assets, customRuntime, rawHtmlOverride, title, fpsCap, showHUD, showFPS, touchControls, autoPause, showHitboxes, embedded]);
+  }, [scene, scenes, assets, customRuntime, rawHtmlOverride, title, fpsCap, embedded]);
 
   useEffect(() => {
     const win = iframeRef.current?.contentWindow;
@@ -100,10 +103,17 @@ export function GameRuntime({
         muted,
         music,
         musicUrl,
+        showHUD,
+        showFPS,
+        showHitboxes,
+        touchControls,
+        autoPause,
+        cameraOrientation,
+        fpsCap,
       },
       "*",
     );
-  }, [volume, muted, music, musicUrl]);
+  }, [volume, muted, music, musicUrl, showHUD, showFPS, showHitboxes, touchControls, autoPause, cameraOrientation, fpsCap]);
 
   useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
@@ -178,7 +188,7 @@ export function GameRuntime({
 export function LegacyCanvasGameRuntime({
   scene, fpsCap, showHUD,
   showFPS = true, volume = 0.8, muted = false, music = false, musicUrl = null,
-  touchControls = true, autoPause = true, showHitboxes = false,
+  touchControls = true, autoPause = true, showHitboxes = false, cameraOrientation = "horizontal",
   onExit,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -205,7 +215,7 @@ export function LegacyCanvasGameRuntime({
 
   useEffect(() => {
     const canvas = canvasRef.current!;
-    const ctx = canvas.getContext("2d")!;
+    const ctx = (canvas.getContext("2d", { alpha: false, desynchronized: true }) ?? canvas.getContext("2d"))!;
     const initial: Scene = JSON.parse(JSON.stringify(scene));
     let work: Scene = JSON.parse(JSON.stringify(initial));
     workRef.current = work;
@@ -245,7 +255,7 @@ export function LegacyCanvasGameRuntime({
     let cssW = 0;
     let cssH = 0;
     const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       cssW = Math.max(1, canvas.clientWidth);
       cssH = Math.max(1, canvas.clientHeight);
       const nextW = Math.round(cssW * dpr);
@@ -254,10 +264,12 @@ export function LegacyCanvasGameRuntime({
       if (canvas.height !== nextH) canvas.height = nextH;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
+      ctx.imageSmoothingQuality = "medium";
     };
     resize();
     window.addEventListener("resize", resize);
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(resize) : null;
+    ro?.observe(canvas);
 
     type Part = { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string; size: number; gravity: number };
     const particles: Part[] = [];
@@ -336,11 +348,13 @@ export function LegacyCanvasGameRuntime({
       for (let y = 0; y < H; y += 40) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
       ctx.stroke();
 
-      // Fixed-size camera: the view does NOT shrink when the map grows.
+      // Fixed-size camera: adjusts framing based on cameraOrientation ("horizontal" vs "vertical").
+      const isVerticalCam = cameraOrientation === "vertical";
+      const VIEW_W = 540;
       const VIEW_H = 700;
-      const scale = H / VIEW_H;
-      const viewW = W / scale;
-      const viewH = VIEW_H;
+      const scale = isVerticalCam ? W / VIEW_W : H / VIEW_H;
+      const viewW = isVerticalCam ? VIEW_W : W / scale;
+      const viewH = isVerticalCam ? H / scale : VIEW_H;
       const player = work.entities.find((e) => e.controllable);
       let camX = state.cameraX;
       let camY = 0;
@@ -360,10 +374,16 @@ export function LegacyCanvasGameRuntime({
       ctx.scale(scale, scale);
       ctx.translate(-camX, -camY);
 
+      const cullMinX = camX - 96;
+      const cullMaxX = camX + viewW + 96;
+      const cullMinY = camY - 96;
+      const cullMaxY = camY + viewH + 96;
+
       const tSec = performance.now() / 1000;
       const visualEffects = W >= 700;
       for (const e of drawList) {
-        if (e.visible === false) continue;
+        if (e.visible === false || e.x < -9000) continue;
+        if (e.x + e.w < cullMinX || e.x > cullMaxX || e.y + e.h < cullMinY || e.y > cullMaxY) continue;
         const la = layerOpacityFor(work, e);
         const a = (e.opacity ?? 1) * la;
         // invuln blink
@@ -371,13 +391,14 @@ export function LegacyCanvasGameRuntime({
           ctx.globalAlpha = 0.4 * la;
         } else if (a !== 1) ctx.globalAlpha = a;
         drawEntity(ctx, e, tSec, visualEffects);
-        ctx.globalAlpha = 1;
+        if (ctx.globalAlpha !== 1) ctx.globalAlpha = 1;
       }
 
       // particles
       flushParticles();
       for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
+        if (p.x < cullMinX || p.x > cullMaxX || p.y < cullMinY || p.y > cullMaxY) continue;
         ctx.globalAlpha = Math.max(0, p.life / p.max);
         ctx.fillStyle = p.color;
         ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
@@ -390,6 +411,8 @@ export function LegacyCanvasGameRuntime({
         ctx.strokeStyle = "#f43f5e";
         ctx.setLineDash([4, 3]);
         for (const e of work.entities) {
+          if (e.x < -9000) continue;
+          if (e.x + e.w < cullMinX || e.x > cullMaxX || e.y + e.h < cullMinY || e.y > cullMaxY) continue;
           const hb = e.hitbox;
           if (hb) ctx.strokeRect(e.x + hb.x, e.y + hb.y, hb.w, hb.h);
           else ctx.strokeRect(e.x, e.y, e.w, e.h);
@@ -440,14 +463,23 @@ export function LegacyCanvasGameRuntime({
       }
     };
 
-    const loop = (now: number) => {
-      raf = requestAnimationFrame(loop);
-      const elapsed = (now - last) / 1000;
+    const targetIntervalMs = 1000 / Math.max(1, fpsCap);
+    let lastTickMs = last;
+
+    const tickFrame = (now: number, fromTimer: boolean) => {
+      const deltaMs = now - lastTickMs;
+      if (fromTimer) {
+        if (deltaMs < targetIntervalMs - 1.2) return;
+      } else if (fpsCap <= 30 && deltaMs < targetIntervalMs - 2.5) {
+        return;
+      }
+      lastTickMs = now;
+      const elapsed = Math.min(0.05, Math.max(0, (now - last) / 1000));
       last = now;
       if (!paused) {
         acc += elapsed;
         let steps = 0;
-        while (acc >= targetDt && steps < 5) {
+        while (acc + 0.0015 >= targetDt && steps < 5) {
           if (!state.win && !state.dead) {
             stepScene(work, inputRef.current, state, targetDt);
             scripts.step(work, state, inputRef.current, hooks, targetDt);
@@ -457,16 +489,19 @@ export function LegacyCanvasGameRuntime({
           }
           if (shake.time > 0) shake.time = Math.max(0, shake.time - targetDt);
           tickEmitters(targetDt);
-          // particle physics
+          // particle physics (swap-and-pop O(1))
           for (let i = particles.length - 1; i >= 0; i--) {
             const p = particles[i];
             p.x += p.vx * targetDt;
             p.y += p.vy * targetDt;
             p.vy += p.gravity * targetDt;
             p.life -= targetDt;
-            if (p.life <= 0) particles.splice(i, 1);
+            if (p.life <= 0) {
+              particles[i] = particles[particles.length - 1];
+              particles.pop();
+            }
           }
-          acc -= targetDt;
+          acc = Math.max(0, acc - targetDt);
           steps++;
         }
         // Scripts de interfaz «mientras se mantiene»: un paso por fotograma,
@@ -485,22 +520,32 @@ export function LegacyCanvasGameRuntime({
         return d;
       });
       if (now - fpsT > 500) {
-        const fps = Math.round((frames * 1000) / (now - fpsT));
+        const fps = Math.min(fpsCap, Math.round((frames * 1000) / (now - fpsT)));
         setHud({ score: state.score, fps, win: state.win, dead: state.dead });
         frames = 0; fpsT = now;
       }
     };
+
+    const loop = (now: number) => {
+      raf = requestAnimationFrame(loop);
+      tickFrame(now, false);
+    };
     raf = requestAnimationFrame(loop);
+    const timer = window.setInterval(() => {
+      if (!paused) tickFrame(performance.now(), true);
+    }, 4);
 
     return () => {
       cancelAnimationFrame(raf);
+      window.clearInterval(timer);
+      ro?.disconnect();
       uiScriptsRef.current = null;
       workRef.current = null;
       window.removeEventListener("resize", resize);
       document.removeEventListener("visibilitychange", onVis);
       window.removeEventListener("asternal:restart", onRestart);
     };
-  }, [scene, fpsCap, showHUD, autoPause, showHitboxes]);
+  }, [scene, fpsCap, showHUD, autoPause, showHitboxes, cameraOrientation]);
 
   // Input is the OR of multiple sources (buttons, joystick, keyboard) so
   // pressing JUMP while moving the joystick keeps both active.
@@ -773,14 +818,14 @@ export function drawEntity(ctx: CanvasRenderingContext2D, e: Entity, time: numbe
   }
   if (visualEffects) {
     ctx.shadowColor = e.color;
-    ctx.shadowBlur = e.kind === "coin" ? 10 : e.kind === "goal" ? 12 : 4;
+    ctx.shadowBlur = e.kind === "coin" ? 10 : (e.kind === "goal" && e.goal) ? 12 : 4;
   }
   ctx.fillStyle = e.color;
   if (e.kind === "coin") {
     ctx.beginPath();
     ctx.arc(e.x + e.w / 2, e.y + e.h / 2, e.w / 2, 0, Math.PI * 2);
     ctx.fill();
-  } else if (e.kind === "goal") {
+  } else if (e.kind === "goal" && e.goal) {
     ctx.fillStyle = "rgba(125,211,252,0.3)";
     ctx.fillRect(e.x, e.y, e.w, e.h);
     ctx.fillStyle = e.color;
@@ -792,8 +837,11 @@ export function drawEntity(ctx: CanvasRenderingContext2D, e: Entity, time: numbe
     ctx.closePath();
     ctx.fill();
   } else if (e.kind === "player") {
+    roundRect(ctx, e.x, e.y, e.w, e.h, 6);
+    ctx.fill();
     ctx.shadowBlur = 0;
-    drawChibiCharacter(ctx, e.x, e.y, e.w, e.h, e.color, e.facing ?? 1);
+    const effFacing = ((e.facing === -1) !== !!e.flipX) ? -1 : 1;
+    drawChibiCharacter(ctx, e.x, e.y, e.w, e.h, e.color, effFacing);
   } else {
     const r = e.kind === "platform" ? 4 : 6;
     roundRect(ctx, e.x, e.y, e.w, e.h, r);

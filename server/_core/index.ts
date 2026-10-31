@@ -1,7 +1,14 @@
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { authenticateCommunityRequest, editGameWithOrion, rankCommunityFeed, reviewCommunityPost, reviewCommunitySubmission } from "../community-ai";
+import {
+  authenticateCommunityRequest,
+  editGameWithOrion,
+  generateScriptManualWithOrion,
+  rankCommunityFeed,
+  reviewCommunityPost,
+  reviewCommunitySubmission,
+} from "../community-ai";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -42,6 +49,15 @@ app.post("/api/orion/edit-game", async (req, res) => {
     res.json(await editGameWithOrion(req.body));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Orión no pudo editar el juego.";
+    res.status(400).json({ error: message });
+  }
+});
+
+app.post("/api/orion/script-ai", async (req, res) => {
+  try {
+    res.json(await generateScriptManualWithOrion(req.body));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Orión no pudo generar el script manual.";
     res.status(400).json({ error: message });
   }
 });

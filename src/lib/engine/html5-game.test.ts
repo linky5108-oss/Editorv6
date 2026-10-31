@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { newScene } from "./core";
+import { KIND_PRESETS, entityKindLabel, isMainGoalEntity, newScene, uid } from "./core";
+import { t, setLang } from "../i18n";
 import {
   buildProjectGameHtml,
   buildStandaloneGameHtml,
@@ -265,10 +266,11 @@ describe("motor y vista previa HTML5 autónomos (independientes del editor)", ()
     const coin = scene.entities.find((e) => e.kind === "coin")!;
     const goal = scene.entities.find((e) => e.kind === "goal")!;
 
-    // Los assets SVG generados bajo demanda para el editor de dibujo usan las dimensiones reales y el diseño exacto del motor
+    // Los assets SVG generados bajo demanda para el menú y el editor de dibujo usan las dimensiones reales y el diseño exacto de character.ts
     const playerSvg = decodeURIComponent(entityToEditableSvgDataUrl(player));
     expect(playerSvg).toContain(`width="${player.w}" height="${player.h}"`);
-    expect(playerSvg).toContain("rgba(244,114,182,0.55)"); // rubor chibi predeterminado del motor
+    expect(playerSvg).toContain("rgba(244,114,182,0.3)"); // rubor chibi predeterminado del motor (character.ts)
+    expect(playerSvg).toContain("chibiGloss"); // brillo diagonal idéntico a character.ts
 
     const coinSvg = decodeURIComponent(entityToEditableSvgDataUrl(coin));
     expect(coinSvg).toContain(`width="${coin.w}" height="${coin.h}"`);
@@ -311,8 +313,290 @@ describe("motor y vista previa HTML5 autónomos (independientes del editor)", ()
     expect(cleanedPlayer.texture ?? null).toBeNull();
     expect(cleaned.assets?.sprites.length).toBe(0);
   });
+
+  it("la banderita de meta principal ya viene puesta en la escena y la herramienta Objeto coloca un objeto placeholder como los demás assets predeterminados", () => {
+    setLang("es");
+    expect(t("tool.goal")).toBe("Objeto");
+
+    const scene = newScene("Nivel con Meta Principal");
+    const mainGoal = scene.entities.find((e) => isMainGoalEntity(e));
+    expect(mainGoal).toBeDefined();
+    expect(mainGoal?.goal).toBe(true);
+    expect(mainGoal?.w).toBe(36);
+    expect(mainGoal?.h).toBe(64);
+    expect(entityKindLabel(mainGoal!)).toBe("META");
+
+    // La banderita de meta principal conserva su diseño de bandera
+    const mainGoalSvg = decodeURIComponent(entityToEditableSvgDataUrl(mainGoal!));
+    expect(mainGoalSvg).toContain("rgba(125,211,252,0.3)");
+    expect(mainGoalSvg).toContain("<polygon");
+
+    // Al colocar con la herramienta "Objeto" (KIND_PRESETS.goal), crea un Objeto placeholder (sin bandera)
+    const placedObject = {
+      ...KIND_PRESETS.goal,
+      id: uid(),
+      x: 300,
+      y: 400,
+    };
+    expect(placedObject.name).toBe("Objeto");
+    expect(placedObject.goal).toBe(false);
+    expect(placedObject.w).toBe(40);
+    expect(placedObject.h).toBe(40);
+    expect(isMainGoalEntity(placedObject)).toBe(false);
+    expect(entityKindLabel(placedObject)).toBe("OBJETO");
+
+    // Su representación predeterminada es un rectángulo redondeado placeholder (rx="6") como los demás assets predeterminados del motor
+    const placedObjectSvg = decodeURIComponent(entityToEditableSvgDataUrl(placedObject));
+    expect(placedObjectSvg).toContain('<rect x="0" y="0" width="40" height="40" rx="6" fill="#7dd3fc"/>');
+    expect(placedObjectSvg).not.toContain("<polygon");
+  });
+
+  it("gestiona la biblioteca de sonidos y música en Ajustes y detecta/pregunta qué pista usar cuando se pide música en Scripts Manuales", async () => {
+    const {
+      buildAudioSelectionQuestion,
+      detectAudioRequestAndCandidates,
+      getProjectAudioLibrary,
+      injectAudioAssetIntoScripts,
+      saveAudioLibraryToProject,
+    } = await import("./audio-library");
+
+    const scene = newScene("Nivel Musical");
+    const baseProject = {
+      name: "Juego Musical",
+      scenes: [scene],
+      activeSceneId: scene.id,
+      assets: { sprites: [] },
+      settings: { fpsCap: 60 as const, showHUD: true, showFPS: true },
+    };
+
+    const updatedProject = saveAudioLibraryToProject(baseProject, [
+      { id: "m1", name: "Tema Batalla", url: "data:audio/mp3;base64,AAA", category: "music" },
+      { id: "m2", name: "Bosque Mágico", url: "data:audio/mp3;base64,BBB", category: "music" },
+      { id: "s1", name: "Explosión Retro", url: "data:audio/wav;base64,CCC", category: "sfx" },
+    ]);
+
+    const lib = getProjectAudioLibrary(updatedProject);
+    expect(lib.length).toBe(3);
+
+    // Si el usuario pide poner música en algún lado sin especificar cuál y tiene 2 pistas de música, lo detecta y pregunta cuál de los dos quiere
+    const detection = detectAudioRequestAndCandidates(
+      "Pon música cuando el jugador toque la moneda",
+      lib,
+    );
+    expect(detection.isAudioRequest).toBe(true);
+    expect(detection.intentKind).toBe("music");
+    expect(detection.needsDisambiguation).toBe(true);
+    expect(detection.candidates.map((c) => c.name)).toEqual(["Tema Batalla", "Bosque Mágico"]);
+
+    const question = buildAudioSelectionQuestion(detection.candidates, detection.intentKind);
+    expect(question).toContain("Tema Batalla");
+    expect(question).toContain("Bosque Mágico");
+    expect(question).toContain("¿Cuál de los dos quieres");
+
+    // Cuando el usuario elige uno de los dos (ej. "Bosque Mágico"), se inyecta en el script manual con el evento detectado
+    const scripts = injectAudioAssetIntoScripts(
+      [],
+      detection.candidates[1],
+      "Pon música cuando el jugador toque la moneda",
+    );
+    expect(scripts.length).toBe(1);
+    expect(scripts[0].event).toBe("onCollide");
+    expect(scripts[0].withKind).toBe("coin");
+    expect(scripts[0].blocks[0].kind).toBe("playMusic");
+    expect(scripts[0].blocks[0].soundName).toBe("Bosque Mágico");
+    expect(scripts[0].blocks[0].soundUrl).toBe("data:audio/mp3;base64,BBB");
+
+    // El HTML5 autónomo incluye los assets de audio y el bloque playMusic en el runtime
+    const html = buildProjectGameHtml(updatedProject);
+    expect(html).toContain("Bosque Mágico");
+    expect(html).toContain('case "playMusic":');
+    expect(html).toContain("playMusic: function(nameOrUrl)");
+
+    // Verificar que la biblioteca se gestiona en el apartado de Ajustes de AsternalEditor
+    const editorSource = read("src/components/engine/AsternalEditor.tsx");
+    expect(editorSource).toContain("settings-audio-library");
+    expect(editorSource).toContain("BIBLIOTECA DE SONIDOS Y MÚSICA (ASSETS)");
+  });
+
+  it("integra Scripts Humanos (hechos a mano con bloques de Scratch, variables en pantalla, operadores, sensores y apariencia) junto a Scripts Manuales", async () => {
+    const { createScriptRunner } = await import("./scripts");
+    const {
+      SCRATCH_CATEGORIES,
+      SCRATCH_BLOCK_SPECS,
+      SCRATCH_EVENT_TEMPLATES,
+      collectAllVariableNames,
+    } = await import("./scratch-blocks-catalog");
+
+    // 1. Verifica catálogo oficial de categorías Scratch (scratchfoundation/scratch-blocks)
+    expect(SCRATCH_CATEGORIES.map((c) => c.id)).toEqual([
+      "events",
+      "motion",
+      "looks",
+      "sound",
+      "control",
+      "sensing",
+      "operators",
+      "variables",
+      "myblocks",
+    ]);
+    expect(SCRATCH_BLOCK_SPECS.length).toBeGreaterThanOrEqual(45);
+    expect(SCRATCH_EVENT_TEMPLATES.length).toBeGreaterThanOrEqual(12);
+
+    // 2. Configura una escena con variables de Scratch visibles en el escenario (monitores) y scripts hechos a mano
+    const scene = newScene("Nivel Scratch Humano");
+    scene.variableDefinitions = [
+      {
+        id: "v_puntos",
+        name: "puntos_scratch",
+        scope: "scene",
+        initialValue: 10,
+        visibleOnStage: true,
+      },
+      {
+        id: "v_energia",
+        name: "energia",
+        scope: "entity",
+        initialValue: 50,
+        visibleOnStage: true,
+      },
+    ];
+    scene.variables = { puntos_scratch: 10 };
+
+    const player = scene.entities.find((e) => e.kind === "player")!;
+    player.variables = { energia: 50 };
+    player.scripts = [
+      {
+        id: "s_scratch_1",
+        event: "onStart",
+        blocks: [
+          { id: "b1", kind: "pointInDirection", value: 90 },
+          { id: "b2", kind: "moveSteps", value: 25 },
+          { id: "b3", kind: "turnRight", value: 15 },
+          { id: "b4", kind: "sayForSecs", text: "¡Hola Scratch!", value: 2000 },
+          { id: "b5", kind: "changeSizeBy", value: 20 },
+          {
+            id: "b6",
+            kind: "mathOperation",
+            scope: "scene",
+            text: "puntos_scratch",
+            varA: "$puntos_scratch",
+            mathOp: "mul",
+            varB: "3",
+          },
+          {
+            id: "b7",
+            kind: "joinTextVariable",
+            scope: "scene",
+            text: "saludo",
+            varA: "Total: ",
+            varB: "$puntos_scratch",
+          },
+          {
+            id: "b8",
+            kind: "sensePropertyToVariable",
+            varA: "self",
+            varB: "x",
+            scope: "scene",
+            text: "pos_x",
+          },
+          {
+            id: "b9",
+            kind: "ifVariable",
+            scope: "scene",
+            text: "puntos_scratch",
+            operator: "gte",
+            value: 30,
+            thenBlocks: [
+              {
+                id: "b9_then",
+                kind: "changeVariable",
+                scope: "scene",
+                text: "puntos_scratch",
+                value: 5,
+              },
+              {
+                id: "b9_show",
+                kind: "showVariable",
+                scope: "scene",
+                text: "puntos_scratch",
+              },
+            ],
+            elseBlocks: [],
+          },
+        ],
+      },
+    ];
+
+    const { newRuntimeState } = await import("./core");
+    const startX = player.x;
+    const baseW = player.w;
+    const runner = createScriptRunner();
+    const state = {
+      ...newRuntimeState(scene),
+      time: 1.5,
+    };
+    const input = { left: false, right: false, jump: false };
+    const hooks = {
+      shake: () => {},
+      restart: () => {},
+    };
+
+    runner.step(scene, state, input, hooks, 1 / 60);
+
+    // Verifica que moveSteps desplazó en X (+25), turnRight rotó (+15), sayForSecs activó burbuja, changeSizeBy escaló 120%
+    expect(player.x).toBeCloseTo(startX + 25, 1);
+    expect(player.rotation).toBe(15);
+    expect(player._bubbleText).toBe("¡Hola Scratch!");
+    expect(player.w).toBe(Math.round(baseW * 1.2));
+
+    // Verifica operadores matemáticos, unión de textos, sensor de propiedad y condicional ifVariable de Scratch
+    expect(scene.variables?.puntos_scratch).toBe(35); // (10 * 3) + 5
+    expect(scene.variables?.saludo).toBe("Total: 30");
+    expect(scene.variables?.pos_x).toBe(Math.round(startX + 25));
+
+    const varNames = collectAllVariableNames(
+      scene.variableDefinitions,
+      player.variables,
+      scene.variables,
+      player.scripts
+    );
+    expect(varNames).toContain("puntos_scratch");
+    expect(varNames).toContain("energia");
+    expect(varNames).toContain("saludo");
+
+    // 3. Verifica que el HTML5 autónomo incluye monitores de variables en pantalla, burbujas Scratch y todos los bloques
+    const html = buildStandaloneGameHtml({
+      scene,
+      scenes: [scene],
+      title: "Prueba Scratch HTML5",
+    });
+    expect(html).toContain("puntos_scratch");
+    expect(html).toContain('case "moveSteps":');
+    expect(html).toContain('case "sayForSecs":');
+    expect(html).toContain('block.kind === "ifSensing"');
+    expect(html).toContain('case "mathOperation":');
+    expect(html).toContain('case "showVariable":');
+    expect(html).toContain("e._bubbleText");
+    expect(html).toContain("scene.variableDefinitions");
+
+    // 4. Verifica que la interfaz ofrece tanto Scripts Manuales (IA) como Scripts Humanos (Scratch)
+    const editorSource = read("src/components/engine/AsternalEditor.tsx");
+    expect(editorSource).toContain("HumanScratchScreen");
+    expect(editorSource).toContain("SCRIPTS HUMANOS");
+    expect(editorSource).toContain("open-entity-human-scratch-btn");
+
+    const humanScreenSource = read("src/components/engine/HumanScratchScreen.tsx");
+    expect(humanScreenSource).toContain("SCRIPTS HUMANOS");
+    expect(humanScreenSource).toContain("SCRATCH BLOCKS · SIN IA");
+    expect(humanScreenSource).toContain("CREAR VARIABLE DE SCRATCH");
+  });
+
+  it("mantiene únicamente el recuadro limpio del nivel en SceneEditor sin barras ni funciones extra", () => {
+    const sceneEditorSource = read("src/components/engine/SceneEditor.tsx");
+    expect(sceneEditorSource).not.toContain("BUILDA SCENE");
+    expect(sceneEditorSource).not.toContain("+ ESCENA INDEPENDIENTE");
+    expect(sceneEditorSource).not.toContain("RADAR DE ESCENA");
+    expect(sceneEditorSource).not.toContain("CÁMARA INICIAL");
+    expect(sceneEditorSource).toContain("ctx.strokeRect(0, 0, scene.width, scene.height);");
+  });
 });
-
-
-
-

@@ -39,13 +39,15 @@ ANIMACIONES
 - AnimationClip { id, name, fps, loop, frames: string[] (dataURL) }. Entity.animations: AnimationClip[].
 - currentFrameRenderable(e, time, state?), pickAnimState, findClip. Fidelidad: frame composite respetado sin recorte.
 
-AUDIO
-- Sin sonidos predeterminados: los bloques de sonido solo reproducen archivos del usuario. playSoundUrl(url), playRandomCustomSound() (elige uno al azar de la biblioteca local), loadCustomSounds(), addCustomSound(name, url), vibrate(ms), setVolume, setMuted, startMusic(url), stopMusic(). El bloque playSound guarda soundUrl (dataURL/URL del archivo) y soundName (nombre visible); si faltan, no suena nada.
+AUDIO Y BIBLIOTECA DE SONIDOS Y MÚSICA (en Ajustes)
+- El proyecto incluye una biblioteca de sonidos y música gestionada en Ajustes: project.assets.audio: AudioAsset[] donde cada item es { id, name, url, category: "music" | "sfx" }.
+- Funciones de audio: playSoundUrl(urlOrName), startMusic(urlOrName), stopMusic(), playRandomCustomSound(), loadCustomSounds(), addCustomSound(name, url, id, category), vibrate(ms), setVolume, setMuted.
+- Los bloques playSound y playMusic aceptan soundUrl (URL/dataURL o id del asset en la biblioteca) y soundName (nombre visible en la biblioteca de Ajustes). El bloque stopMusic detiene la música en curso.
 
 SCRIPTING (bloques visuales — genera Entity.scripts: Script[])
 - EventType = onStart|onCreate|onUpdate|onCollide|onKeyDown|onScoreReach|onDestroyed|onDestroy|onTimer|onLeaveScreen|onLand|onWin|onLose|onMessage (entidades) y onTap|onHold|onRelease (elementos de UI: al pulsar, mientras se mantiene y al soltar)
 - Script { id, event, withKind?: EntityKind|"any" (onCollide), key?: "left"|"right"|"jump" (onKeyDown), threshold?: number (onScoreReach), interval?: number ms (onTimer), message?: string (onMessage), blocks: Block[] }
-- BlockKind (51): jump, setVx, setVy, addScore, destroySelf, destroyOther, win, lose, teleport, log, playSound, vibrate, shake, setColor, setSize, setGravity, setControllable, impulse, setVisible, restartScene, setBg, if, setX, setY, moveX, moveY, flipVx, flipVy, bounceY, stop, setSpeed, setOpacity, setHazard, setSolid, setCollectible, setGoalFlag, addLives, setLives, setScore, resetScore, spawnEntity, cloneSelf, setSceneGravity, playRandomSound, wrapScreen, faceTarget, chase, setHitbox, clearHitbox, removeAllOf, comment, hurtPlayer, wait, setFacing, knockback, pushAway, setVariable, changeVariable, setProperty, changeProperty, broadcast, ifVariable, repeat, setObjectSize
+- BlockKind (53): jump, setVx, setVy, addScore, destroySelf, destroyOther, win, lose, teleport, log, playSound, playMusic, stopMusic, vibrate, shake, setColor, setSize, setGravity, setControllable, impulse, setVisible, restartScene, setBg, if, setX, setY, moveX, moveY, flipVx, flipVy, bounceY, stop, setSpeed, setOpacity, setHazard, setSolid, setCollectible, setGoalFlag, addLives, setLives, setScore, resetScore, spawnEntity, cloneSelf, setSceneGravity, playRandomSound, wrapScreen, faceTarget, chase, setHitbox, clearHitbox, removeAllOf, comment, hurtPlayer, wait, setFacing, knockback, pushAway, setVariable, changeVariable, setProperty, changeProperty, broadcast, ifVariable, repeat, setObjectSize
 - Block { id, kind, value, x,y,w,h, text, soundUrl, soundName, color, bool, cond: "scoreGte"|"scoreLte", thenBlocks, elseBlocks, target: "self"|"other"|"scene", scope: "entity"|"scene", property: GenericProperty, operator: "eq"|"neq"|"gte"|"lte", repeat }
 - GenericProperty = x|y|vx|vy|w|h|opacity|rotation|visible|solid|gravity|controllable|hazard|collectible|goal
 - Helpers: nextVariableValue, variableBag(scope), targetFor(target), applyGenericProperty(target, property, value, mode), variablePasses
@@ -59,10 +61,10 @@ UI OVERLAY
 - resolveUIRect(el, screenW, screenH), newUIElement(kind)
 
 AUDIO Y SINTETIZADOR WEBAUDIO EN HTML5
-- Además de archivos del usuario (playSoundUrl(url), playRandomCustomSound(), loadCustomSounds(), addCustomSound(name, url), vibrate(ms), setVolume, setMuted, startMusic(url), stopMusic()), el runtime HTML5 incluye el sintetizador procedural window.AsternalAudio:
+- Además de los archivos de la biblioteca de Ajustes (window.AsternalAudio.playMusic(nombreOId), window.AsternalAudio.stopMusic(), window.AsternalAudio.play(nombreOId)), el runtime HTML5 incluye el sintetizador procedural window.AsternalAudio:
   - Presets integrados: "jump", "coin", "laser", "dash", "explosion", "powerup", "hit", "victory", "bounce", "portal".
-  - Se pueden disparar desde bloques playSound usando soundUrl: "synth:laser" (o el nombre del sonido registrado) o desde código HTML5 con window.AsternalAudio.play("laser") / window.AsternalAudio.synth({ wave: "sine"|"square"|"sawtooth"|"triangle", freq, endFreq, duration, volume }).
-  - Para registrar nuevos sonidos en el archivo HTML5: window.AsternalAudio.registerSound("nombre", { wave, freq, endFreq, duration, volume }).
+  - Se pueden disparar desde bloques playSound usando soundUrl: "synth:laser" (o el nombre/id de un audio de la biblioteca de Ajustes), desde bloques playMusic usando soundName o soundUrl con el nombre/id de la pista de música, o desde código HTML5 con window.AsternalAudio.playMusic("nombre") / window.AsternalAudio.play("nombre").
+  - Para registrar nuevos sonidos sintetizados en el archivo HTML5: window.AsternalAudio.registerSound("nombre", { wave, freq, endFreq, duration, volume }).
 
 RUNTIME HTML5 EDITABLE Y NUEVAS LÓGICAS (window.AsternalRuntime)
 - Todo el juego se compila y ejecuta como un documento HTML5 autónomo donde absolutamente cada parte (distribución de assets, escenas, entidades, scripts de bloques, sonidos, físicas, controles, renderizado y nuevas lógicas que no existen en los bloques) es editable directamente en el archivo HTML5.

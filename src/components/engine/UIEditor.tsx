@@ -10,6 +10,7 @@ import { ScriptEditor } from "./ScriptEditor";
 interface Props {
   scene: Scene;
   onChange: (s: Scene) => void;
+  onOpenHumanScratch?: (uiId: string) => void;
 }
 
 const KIND_LIST: { id: UIElementKind; icon: string; label: string }[] = [
@@ -26,7 +27,7 @@ const ANCHORS: UIAnchor[] = ["tl","tc","tr","cl","c","cr","bl","bc","br"];
 
 type Snap = "peek" | "half" | "full";
 
-export function UIEditor({ scene, onChange }: Props) {
+export function UIEditor({ scene, onChange, onOpenHumanScratch }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const inspectorRef = useRef<HTMLDivElement>(null);
@@ -593,7 +594,7 @@ export function UIEditor({ scene, onChange }: Props) {
               </div>
             )
           ) : selectedEls.length === 1 && sel ? (
-            <ElementInspector key={sel.id} el={sel} update={(p) => updateEl(sel.id, p)} remove={() => removeEl(sel.id)} clone={() => cloneEl(sel.id)} />
+            <ElementInspector key={sel.id} el={sel} update={(p) => updateEl(sel.id, p)} remove={() => removeEl(sel.id)} clone={() => cloneEl(sel.id)} onOpenHumanScratch={onOpenHumanScratch ? () => onOpenHumanScratch(sel.id) : undefined} />
           ) : (
             <MultiInspector
               els={selectedEls}
@@ -615,11 +616,12 @@ export function UIEditor({ scene, onChange }: Props) {
   );
 }
 
-function ElementInspector({ el, update, remove, clone }: {
+function ElementInspector({ el, update, remove, clone, onOpenHumanScratch }: {
   el: UIElement;
   update: (p: Partial<UIElement>) => void;
   remove: () => void;
   clone: () => void;
+  onOpenHumanScratch?: () => void;
 }) {
 
   const fileRef = useRef<HTMLInputElement>(null);
@@ -733,21 +735,35 @@ function ElementInspector({ el, update, remove, clone }: {
         </>
       )}
 
-      {/* Script manual del elemento creado con inteligencia artificial. */}
-      <div className="pt-1.5">
-        <div className="flex items-center justify-between mb-1">
-          <div className="text-[10px] font-display tracking-widest text-muted-foreground">SCRIPT MANUAL · IA</div>
-          <span className="text-[10px] font-mono text-muted-foreground">{el.scripts?.length ?? 0} SCRIPT MANUAL</span>
+      {/* Opciones de Scripts del elemento: Scripts Manuales (IA) y Scripts Humanos (Scratch) */}
+      <div className="pt-1.5 space-y-1.5">
+        <div className="flex items-center justify-between">
+          <div className="text-[10px] font-display tracking-widest text-muted-foreground">SCRIPTS · IA O SCRATCH HUMANO</div>
+          <span className="text-[10px] font-mono text-muted-foreground">{el.scripts?.length ?? 0} SCRIPTS</span>
         </div>
-        <button
-          onClick={() => setScriptsOpen(true)}
-          className="w-full mt-1 px-3 py-2.5 rounded-md bg-primary/10 border border-accent/50 text-primary-glow font-display text-xs tracking-widest flex items-center justify-between glow-border"
-        >
-          <span>✦ SCRIPT MANUAL</span>
-          <span className="font-mono text-[10px] opacity-80">{el.scripts?.length ?? 0} SCRIPT MANUAL</span>
-        </button>
-        <p className="mt-1 text-[10px] text-muted-foreground leading-snug">
-          Describe con tus palabras qué quieres que ocurra al tocar, mantener o soltar este elemento y la inteligencia artificial creará su script manual.
+        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => setScriptsOpen(true)}
+            className="w-full px-3 py-2.5 rounded-md bg-primary/10 border border-accent/50 text-primary-glow font-display text-xs tracking-widest flex items-center justify-between glow-border"
+          >
+            <span>✦ SCRIPT MANUAL (IA)</span>
+            <span className="font-mono text-[10px] opacity-80">{el.scripts?.length ?? 0}</span>
+          </button>
+          {onOpenHumanScratch && (
+            <button
+              type="button"
+              onClick={onOpenHumanScratch}
+              data-testid="open-ui-human-scratch-btn"
+              className="w-full px-3 py-2.5 rounded-md bg-amber-500/15 border border-amber-400/50 text-amber-300 font-display text-xs tracking-widest flex items-center justify-between hover:bg-amber-500/25 transition"
+            >
+              <span>🧩 SCRIPTS HUMANOS</span>
+              <span className="font-mono text-[10px] opacity-90">SCRATCH</span>
+            </button>
+          )}
+        </div>
+        <p className="text-[10px] text-muted-foreground leading-snug">
+          Elige <strong>Script Manual</strong> (con IA) o <strong>Scripts Humanos</strong> (hechos a mano con bloques de Scratch).
         </p>
       </div>
 

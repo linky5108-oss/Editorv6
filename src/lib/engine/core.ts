@@ -130,8 +130,24 @@ export interface Entity {
   // dialog
   dialog?: DialogSpec | null;
   _dialogPlayed?: boolean;
+  /** Bocadillo de texto o pensamiento estilo Scratch («decir» / «pensar»). */
+  _bubbleText?: string | null;
+  _bubbleKind?: "say" | "think";
+  _bubbleUntil?: number;
+  _baseW?: number;
+  _baseH?: number;
   /** Nombre descriptivo opcional de la entidad. */
   name?: string;
+}
+
+export interface ScratchVariableDef {
+  id: string;
+  name: string;
+  scope: "scene" | "entity";
+  entityId?: string;
+  initialValue: number | string;
+  /** Si es true, se muestra como monitor naranja de Scratch en el juego. */
+  visibleOnStage: boolean;
 }
 
 export interface ParallaxLayer { color: string; speed: number; height: number; y: number }
@@ -196,6 +212,8 @@ export interface Scene {
   entities: Entity[];
   /** Estado compartido por escena, accesible desde los bloques visuales. */
   variables?: Record<string, string | number | boolean>;
+  /** Definiciones de variables de Scratch (incluyendo si se muestran en pantalla en el juego). */
+  variableDefinitions?: ScratchVariableDef[];
   timeLimit?: number;            // seconds; 0 = no limit
   parallax?: ParallaxLayer[];    // deprecated — ignored at runtime, kept for older saves
   layers?: SceneLayer[];         // Z-ordered scene layers
@@ -347,6 +365,7 @@ export interface ProjectSettings {
   touchControls?: boolean;
   autoPause?: boolean;
   showHitboxes?: boolean;
+  cameraOrientation?: "horizontal" | "vertical";
   language?: "es" | "en" | "pt" | "fr" | "de";
   perfOptimized?: boolean;
   fpsDefault60Applied?: boolean;
@@ -383,11 +402,23 @@ export interface CustomRuntimeConfig {
   orionHistory?: OrionHistoryItem[];
 }
 
+export interface AudioAsset {
+  id: string;
+  name: string;
+  /** dataURL o URL del archivo de audio del usuario. */
+  url: string;
+  /** Categoría del asset en la biblioteca: "music" (música) o "sfx" (sonido/efecto). */
+  category: "music" | "sfx";
+}
+
 export interface Project {
   name: string;
   scenes: Scene[];
   activeSceneId: string;
-  assets?: { sprites: SpriteAsset[] };
+  assets?: {
+    sprites: SpriteAsset[];
+    audio?: AudioAsset[];
+  };
   settings: ProjectSettings;
   customRuntime?: CustomRuntimeConfig;
 }
@@ -405,6 +436,7 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   touchControls: true,
   autoPause: true,
   showHitboxes: false,
+  cameraOrientation: "horizontal",
 };
 
 export const KIND_PRESETS: Record<EntityKind, Omit<Entity, "id" | "x" | "y">> = {
@@ -412,8 +444,28 @@ export const KIND_PRESETS: Record<EntityKind, Omit<Entity, "id" | "x" | "y">> = 
   platform: { kind: "platform", w: 40, h: 40, vx: 0, vy: 0, color: "#1e3a8a", solid: true, gravity: false, controllable: false, collectible: false, hazard: false, goal: false, visible: true, opacity: 1, texture: null },
   enemy: { kind: "enemy", w: 40, h: 40, vx: 60, vy: 0, color: "#f43f5e", solid: false, gravity: true, controllable: false, collectible: false, hazard: true, goal: false, visible: true, opacity: 1, texture: null },
   coin: { kind: "coin", w: 22, h: 22, vx: 0, vy: 0, color: "#fbbf24", solid: false, gravity: false, controllable: false, collectible: true, hazard: false, goal: false, visible: true, opacity: 1, texture: null },
-  goal: { kind: "goal", w: 36, h: 64, vx: 0, vy: 0, color: "#7dd3fc", solid: false, gravity: false, controllable: false, collectible: false, hazard: false, goal: true, visible: true, opacity: 1, texture: null },
+  goal: { kind: "goal", name: "Objeto", w: 40, h: 40, vx: 0, vy: 0, color: "#7dd3fc", solid: false, gravity: false, controllable: false, collectible: false, hazard: false, goal: false, visible: true, opacity: 1, texture: null },
   decor: { kind: "decor", w: 64, h: 64, vx: 0, vy: 0, color: "#a78bfa", solid: false, gravity: false, controllable: false, collectible: false, hazard: false, goal: false, visible: true, opacity: 1, texture: null, z: -1 },
+};
+
+/** Preset predeterminado de la banderita de meta principal que ya viene puesta en la escena. */
+export const MAIN_GOAL_PRESET: Omit<Entity, "id" | "x" | "y"> = {
+  kind: "goal",
+  name: "Meta",
+  w: 36,
+  h: 64,
+  vx: 0,
+  vy: 0,
+  color: "#7dd3fc",
+  solid: false,
+  gravity: false,
+  controllable: false,
+  collectible: false,
+  hazard: false,
+  goal: true,
+  visible: true,
+  opacity: 1,
+  texture: null,
 };
 
 export const uid = () => Math.random().toString(36).slice(2, 10);
@@ -430,6 +482,22 @@ export const CLONE_OFFSET = 24;
  */
 export function isPlayerEntity(e: Entity): boolean {
   return e.controllable === true;
+}
+
+/**
+ * ¿Es la banderita de meta principal?
+ * La banderita de meta principal ya viene puesta en la escena y tiene `goal: true`.
+ */
+export function isMainGoalEntity(e: Pick<Entity, "kind" | "goal">): boolean {
+  return e.goal === true;
+}
+
+/** Nombre legible del objeto en el editor (distingue la Meta principal del Objeto placeholder). */
+export function entityKindLabel(e: Pick<Entity, "kind" | "goal" | "name">): string {
+  if (e.kind === "goal") {
+    return e.goal ? "META" : (e.name ? e.name.toUpperCase() : "OBJETO");
+  }
+  return (e.name || e.kind).toUpperCase();
 }
 
 /**
@@ -705,7 +773,7 @@ export function newScene(name = "Scene 1"): Scene {
       { ...KIND_PRESETS.coin, id: uid(), x: 320, y: 440 },
       { ...KIND_PRESETS.coin, id: uid(), x: 600, y: 340 },
       { ...KIND_PRESETS.enemy, id: uid(), x: 800, y: 540 },
-      { ...KIND_PRESETS.goal, id: uid(), x: 1080, y: 536 },
+      { ...MAIN_GOAL_PRESET, id: uid(), x: 1080, y: 536 },
       { ...KIND_PRESETS.player, id: uid(), x: 80, y: 540 },
     ],
   });
@@ -731,8 +799,17 @@ export function aabb(e: Entity) {
 }
 
 export function intersects(a: Entity, b: Entity) {
-  const A = aabb(a), B = aabb(b);
-  return A.x < B.x + B.w && A.x + A.w > B.x && A.y < B.y + B.h && A.y + A.h > B.y;
+  const ahb = a.hitbox;
+  const ax = ahb ? a.x + ahb.x : a.x;
+  const ay = ahb ? a.y + ahb.y : a.y;
+  const aw = ahb ? ahb.w : a.w;
+  const ah = ahb ? ahb.h : a.h;
+  const bhb = b.hitbox;
+  const bx = bhb ? b.x + bhb.x : b.x;
+  const by = bhb ? b.y + bhb.y : b.y;
+  const bw = bhb ? bhb.w : b.w;
+  const bh = bhb ? bhb.h : b.h;
+  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
 }
 
 export interface RuntimeInput {

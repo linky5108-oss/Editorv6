@@ -1,172 +1,331 @@
 /* ============================================================================
-   ASTERNAL · GLASS — sistema visual único
-   ───────────────────────────────────────
-   Reemplaza al antiguo estilo M3E Canvas. Todo es cristal (glassmorphism):
-   superficies translúcidas con desenfoque, borde de luz y sombra suave.
-   Un único estilo de botón, en el azul oscuro de la marca.
-   Se importa el último para fijar tokens y componentes.
+   ASTERNAL · DRAWABLY HAND-DRAWN SYSTEM (https://www.drawably.dev/)
+   ─────────────────────────────────────────────────────────────────
+   Transforma toda la aplicación a un estilo dibujado a mano con lápiz de
+   grafito y bolígrafo de tinta sobre papel de cuaderno (#e3e3e1), utilizando
+   la tipografía "Drawably Pen", la paleta oficial de drawably.dev, textura de
+   papel fractalNoise, bordes trazados a mano con pulso firme (sin temblor)
+   e iconos con doble pasada limpia a lápiz.
    ========================================================================== */
 
-/* ─── Tokens · claro ─────────────────────────────────────────────────────── */
+/* ─── Tokens · Papel claro (extraídos de https://www.drawably.dev/) ──────── */
 :root {
-  --radius: 1rem;
+  --radius: 0.625rem;
 
-  /* Escala de superficies (se mantiene el nombre por compatibilidad) */
-  --m3-surface-lowest: oklch(1 0 0 / 0.72);
-  --m3-surface-low: oklch(1 0 0 / 0.6);
-  --m3-surface: oklch(0.97 0.006 258 / 0.55);
-  --m3-surface-high: oklch(0.94 0.01 258 / 0.55);
-  --m3-surface-highest: oklch(0.91 0.014 258 / 0.6);
-  --m3-elev-1: 0 4px 14px -6px oklch(0.3 0.08 262 / 0.18);
-  --m3-elev-2: 0 10px 26px -10px oklch(0.3 0.08 262 / 0.24);
-  --m3-elev-3: 0 18px 44px -14px oklch(0.3 0.08 262 / 0.3);
+  --paper: #e3e3e1;
+  --pen: #2724d1;
+  --drawably-stroke: #2724d1;
+  --drawably-fill: #2724d1;
+  --drawably-paper: #e3e3e1;
+  --drawably-error: #d12724;
+  --drawably-success: #188a42;
 
-  --foreground: oklch(0.2 0.03 262);
-  --ink: oklch(0.2 0.03 262);
-  --ink-2: oklch(0.4 0.03 262);
-  --ink-3: oklch(0.5 0.025 262);
+  /* Superficies de papel de boceto */
+  --m3-surface-lowest: #efeeea;
+  --m3-surface-low: #ebeae6;
+  --m3-surface: #e6e5e1;
+  --m3-surface-high: #deddd9;
+  --m3-surface-highest: #d5d4cf;
+  --m3-outline: rgba(24, 24, 27, 0.55);
+  --m3-outline-variant: rgba(24, 24, 27, 0.28);
 
-  --card: oklch(1 0 0 / 0.62);
-  --card-foreground: var(--ink);
-  --surface-2: oklch(1 0 0 / 0.45);
-  --popover: oklch(1 0 0 / 0.78);
-  --popover-foreground: var(--ink);
+  /* Sombras de trazo a lápiz (desplazadas limpias, sin blur sintético) */
+  --m3-elev-1: 2px 2px 0 0 rgba(24, 24, 27, 0.14);
+  --m3-elev-2: 3px 3px 0 0 rgba(24, 24, 27, 0.18);
+  --m3-elev-3: 4px 4px 0 0 rgba(24, 24, 27, 0.22);
 
-  /* Azul oscuro de la marca: único color de los botones */
-  --primary: oklch(0.45 0.15 264);
-  --primary-foreground: oklch(1 0 0);
-  --primary-glow: oklch(0.58 0.14 258);
-  --blue-600: oklch(0.42 0.15 266);
+  --canvas: #e3e3e1;
+  --background: #e3e3e1;
+  --foreground: #18181b;
+  --ink: #18181b;
+  --ink-2: #474645;
+  --ink-3: #6e675f;
 
-  /* Acentos y contenedores: tinte azul neutro (sin lavanda/rosado) */
-  --accent: oklch(0.45 0.15 264 / 0.12);
-  --accent-foreground: oklch(0.38 0.15 264);
-  --secondary: oklch(1 0 0 / 0.5);
-  --secondary-foreground: oklch(0.28 0.04 262);
-  --muted: oklch(1 0 0 / 0.45);
-  --muted-foreground: oklch(0.46 0.025 262);
+  --card: #ebeae6;
+  --card-foreground: #18181b;
+  --surface-2: #dad9d5;
+  --popover: #efeeea;
+  --popover-foreground: #18181b;
 
-  --line: oklch(1 0 0 / 0.65);
-  --line-strong: oklch(0.45 0.08 262 / 0.28);
+  /* Tinta azul bolígrafo de Drawably (#2724d1) */
+  --primary: #2724d1;
+  --primary-foreground: #e3e3e1;
+  --primary-glow: #3b38e0;
+  --blue-600: #2724d1;
+
+  --accent: rgba(39, 36, 209, 0.10);
+  --accent-foreground: #2724d1;
+  --secondary: #dad9d5;
+  --secondary-foreground: #18181b;
+  --muted: #dad9d5;
+  --muted-foreground: #474645;
+
+  --line: rgba(24, 24, 27, 0.28);
+  --line-strong: rgba(24, 24, 27, 0.58);
   --border: var(--line);
-  --input: oklch(0.45 0.08 262 / 0.25);
-  --ring: oklch(0.45 0.15 264 / 0.45);
+  --input: rgba(24, 24, 27, 0.42);
+  --ring: rgba(39, 36, 209, 0.48);
 
-  --destructive: oklch(0.55 0.2 25);
-  --destructive-foreground: oklch(1 0 0);
-  --success: oklch(0.55 0.15 155);
-  --warn: oklch(0.72 0.15 80);
-  --success-ink: oklch(0.5 0.13 155);
-  --error-ink: oklch(0.5 0.19 25);
-  --warn-ink: oklch(0.5 0.11 70);
+  --destructive: #c2410c;
+  --destructive-foreground: #e3e3e1;
+  --success: #0f766e;
+  --warn: #b45309;
+  --success-ink: #0f766e;
+  --error-ink: #c2410c;
+  --warn-ink: #b45309;
 
   --shadow-sm: var(--m3-elev-1);
   --shadow-md: var(--m3-elev-1);
   --shadow-lg: var(--m3-elev-2);
   --shadow-xl: var(--m3-elev-3);
   --shadow-float: var(--m3-elev-3);
-  --shadow-glow: 0 10px 28px -10px oklch(0.45 0.15 264 / 0.45);
+  --shadow-glow: 2.5px 2.5px 0 0 rgba(39, 36, 209, 0.26);
 
-  /* Cristal */
-  --glass-fill: oklch(1 0 0 / 0.55);
-  --glass-fill-strong: oklch(1 0 0 / 0.72);
-  --glass-fill-soft: oklch(1 0 0 / 0.38);
-  --glass-edge-muted: oklch(1 0 0 / 0.7);
-  --glass-highlight: inset 0 1px 0 oklch(1 0 0 / 0.75);
+  /* Superficies de papel en lugar de cristal (sin backdrop-filter para no atrapar fixed) */
+  --glass-fill: #ebeae6;
+  --glass-fill-strong: #efeeea;
+  --glass-fill-soft: #e0dfdb;
+  --glass-edge-muted: rgba(24, 24, 27, 0.42);
+  --glass-highlight: inset 0 0 0 0 transparent;
   --glass-shadow: var(--m3-elev-1);
-  --glass-blur: blur(18px) saturate(170%);
-  --glass-hot-edge: oklch(1 0 0 / 0.9);
-  --glass-blue-edge: oklch(0.45 0.15 264 / 0.3);
+  --glass-blur: none;
+  --glass-hot-edge: #18181b;
+  --glass-blue-edge: #2724d1;
   --glass-deep-shadow: var(--m3-elev-3);
   --glass-control-shadow: var(--m3-elev-1);
-  --glass-base: var(--canvas);
+  --glass-base: var(--paper);
   --asternal-control-gradient: none;
 
-  /* Botón de cristal azul */
-  --glass-btn-fill: linear-gradient(180deg, oklch(0.52 0.15 264 / 0.88), oklch(0.42 0.15 264 / 0.92));
+  /* Relleno achurado a bolígrafo */
+  --glass-btn-fill: repeating-linear-gradient(
+    -45deg,
+    #2724d1 0px,
+    #2724d1 3px,
+    #211ec2 3px,
+    #211ec2 6px
+  );
 
-  /* Asternal Plus */
-  --plus: oklch(0.52 0.1 210);
-  --plus-on-primary: oklch(1 0 0);
-  --plus-container: oklch(0.9 0.05 205 / 0.6);
-  --plus-on-container: oklch(0.28 0.07 210);
-  --plus-outline: oklch(0.66 0.09 208);
-  --plus-frame-aurora: oklch(0.7 0.13 205);
-  --plus-frame-ocean: oklch(0.62 0.15 240);
-  --plus-frame-ice: oklch(0.82 0.08 200);
-  --plus-frame-neon: oklch(0.75 0.15 192);
+  /* Asternal Plus en paleta de tintas de Drawably */
+  --plus: #0f766e;
+  --plus-on-primary: #e3e3e1;
+  --plus-container: rgba(15, 118, 110, 0.12);
+  --plus-on-container: #0f766e;
+  --plus-outline: #0f766e;
+  --plus-frame-aurora: #0f766e;
+  --plus-frame-ocean: #2724d1;
+  --plus-frame-ice: #6d4bd6;
+  --plus-frame-neon: #b45309;
 }
 
-/* ─── Tokens · oscuro ────────────────────────────────────────────────────── */
+/* ─── Tokens · Papel carbón oscuro ───────────────────────────────────────── */
 .dark {
-  --m3-surface-lowest: oklch(0.2 0.03 262 / 0.7);
-  --m3-surface-low: oklch(0.22 0.03 262 / 0.55);
-  --m3-surface: oklch(0.24 0.03 262 / 0.5);
-  --m3-surface-high: oklch(0.28 0.03 262 / 0.55);
-  --m3-surface-highest: oklch(0.32 0.03 262 / 0.6);
-  --m3-elev-1: 0 4px 14px -6px oklch(0 0 0 / 0.5);
-  --m3-elev-2: 0 10px 26px -10px oklch(0 0 0 / 0.55);
-  --m3-elev-3: 0 18px 44px -14px oklch(0 0 0 / 0.6);
+  --paper: #1c1b1a;
+  --pen: #7c7aff;
+  --drawably-stroke: #7c7aff;
+  --drawably-fill: #7c7aff;
+  --drawably-paper: #1c1b1a;
+  --drawably-error: #f87171;
+  --drawably-success: #34d399;
 
-  --foreground: oklch(0.94 0.01 262);
-  --ink: oklch(0.94 0.01 262);
-  --ink-2: oklch(0.8 0.015 262);
-  --ink-3: oklch(0.65 0.02 262);
+  --m3-surface-lowest: #22211f;
+  --m3-surface-low: #252422;
+  --m3-surface: #282724;
+  --m3-surface-high: #2e2c29;
+  --m3-surface-highest: #35332f;
+  --m3-outline: rgba(231, 229, 224, 0.52);
+  --m3-outline-variant: rgba(231, 229, 224, 0.24);
 
-  --card: oklch(0.24 0.03 262 / 0.5);
-  --surface-2: oklch(0.26 0.03 262 / 0.45);
-  --popover: oklch(0.2 0.03 262 / 0.82);
+  --m3-elev-1: 2px 2px 0 0 rgba(0, 0, 0, 0.5);
+  --m3-elev-2: 3px 3px 0 0 rgba(0, 0, 0, 0.6);
+  --m3-elev-3: 4px 4px 0 0 rgba(0, 0, 0, 0.7);
 
-  --primary: oklch(0.5 0.16 264);
-  --primary-foreground: oklch(1 0 0);
-  --primary-glow: oklch(0.62 0.14 258);
+  --canvas: #1c1b1a;
+  --background: #1c1b1a;
+  --foreground: #e7e5e0;
+  --ink: #e7e5e0;
+  --ink-2: #b8b4ac;
+  --ink-3: #8c877e;
 
-  --accent: oklch(0.6 0.15 264 / 0.2);
-  --accent-foreground: oklch(0.86 0.06 262);
-  --secondary: oklch(1 0 0 / 0.07);
-  --secondary-foreground: oklch(0.9 0.02 262);
-  --muted: oklch(1 0 0 / 0.06);
-  --muted-foreground: oklch(0.74 0.015 262);
+  --card: #252422;
+  --surface-2: #2e2c29;
+  --popover: #272623;
 
-  --line: oklch(1 0 0 / 0.12);
-  --line-strong: oklch(1 0 0 / 0.22);
-  --input: oklch(1 0 0 / 0.18);
-  --ring: oklch(0.62 0.15 264 / 0.6);
+  --primary: #7c7aff;
+  --primary-foreground: #18181b;
+  --primary-glow: #9492ff;
 
-  --destructive: oklch(0.65 0.18 25);
-  --destructive-foreground: oklch(1 0 0);
-  --success: oklch(0.78 0.14 155);
-  --warn: oklch(0.85 0.13 80);
-  --success-ink: oklch(0.82 0.14 155);
-  --error-ink: oklch(0.8 0.14 25);
-  --warn-ink: oklch(0.86 0.12 88);
+  --accent: rgba(124, 122, 255, 0.16);
+  --accent-foreground: #c4c3ff;
+  --secondary: #2e2c29;
+  --secondary-foreground: #e7e5e0;
+  --muted: #2e2c29;
+  --muted-foreground: #b8b4ac;
 
-  --glass-fill: oklch(0.25 0.03 262 / 0.5);
-  --glass-fill-strong: oklch(0.22 0.03 262 / 0.7);
-  --glass-fill-soft: oklch(0.28 0.03 262 / 0.35);
-  --glass-edge-muted: oklch(1 0 0 / 0.12);
-  --glass-highlight: inset 0 1px 0 oklch(1 0 0 / 0.1);
-  --glass-hot-edge: oklch(1 0 0 / 0.22);
+  --line: rgba(231, 229, 224, 0.26);
+  --line-strong: rgba(231, 229, 224, 0.54);
+  --input: rgba(231, 229, 224, 0.38);
+  --ring: rgba(124, 122, 255, 0.55);
 
-  --plus: oklch(0.8 0.08 200);
-  --plus-on-primary: oklch(0.22 0.05 210);
-  --plus-container: oklch(0.32 0.06 210 / 0.6);
-  --plus-on-container: oklch(0.9 0.05 200);
-  --plus-outline: oklch(0.75 0.08 205);
+  --destructive: #ef4444;
+  --destructive-foreground: #18181b;
+  --success: #34d399;
+  --warn: #fbbf24;
+  --success-ink: #34d399;
+  --error-ink: #f87171;
+  --warn-ink: #fbbf24;
+
+  --glass-fill: #252422;
+  --glass-fill-strong: #282724;
+  --glass-fill-soft: #201f1d;
+  --glass-edge-muted: rgba(231, 229, 224, 0.38);
+  --glass-highlight: inset 0 0 0 0 transparent;
+  --glass-hot-edge: #e7e5e0;
+  --glass-blue-edge: #7c7aff;
+
+  --glass-btn-fill: repeating-linear-gradient(
+    -45deg,
+    #7c7aff 0px,
+    #7c7aff 3px,
+    #6563eb 3px,
+    #6563eb 6px
+  );
+
+  --plus: #2dd4bf;
+  --plus-on-primary: #18181b;
+  --plus-container: rgba(45, 212, 191, 0.15);
+  --plus-on-container: #5eead4;
+  --plus-outline: #2dd4bf;
 }
 
-/* ─── Base ───────────────────────────────────────────────────────────────── */
+/* ─── Papel de boceto y filtro de grano de https://www.drawably.dev/ ─────── */
 body {
-  background:
-    radial-gradient(60rem 40rem at 10% -10%, oklch(0.45 0.15 264 / 0.16), transparent 60%),
-    radial-gradient(50rem 36rem at 110% 10%, oklch(0.72 0.08 236 / 0.18), transparent 60%),
-    radial-gradient(44rem 30rem at 50% 120%, oklch(0.58 0.14 258 / 0.12), transparent 60%),
-    var(--canvas) !important;
-  background-attachment: fixed !important;
-  color: var(--foreground);
+  background-color: var(--paper) !important;
+  background-image:
+    radial-gradient(rgba(24, 24, 27, 0.075) 1px, transparent 0),
+    linear-gradient(to right, rgba(24, 24, 27, 0.028) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(24, 24, 27, 0.028) 1px, transparent 1px) !important;
+  background-size: 20px 20px, 40px 40px, 40px 40px !important;
+  background-attachment: scroll !important;
+  color: var(--ink);
+  font-family: "Drawably Pen", "Patrick Hand", "Inter", system-ui, sans-serif;
 }
 
-/* ─── Cristal en todo: superficies, tarjetas, menús, diálogos, campos ────── */
+.dark body {
+  background-image:
+    radial-gradient(rgba(231, 229, 224, 0.065) 1px, transparent 0),
+    linear-gradient(to right, rgba(231, 229, 224, 0.022) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(231, 229, 224, 0.022) 1px, transparent 1px) !important;
+}
+
+/* Filtro de textura de papel exacto extraído de https://www.drawably.dev/ */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9998;
+  opacity: 0.042;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* Tipografía dibujada a mano global */
+h1, h2, h3, h4, h5, h6,
+button, input, select, textarea, label,
+.font-display, .m3-display-large, .m3-headline-small, .m3-title-medium {
+  font-family: "Drawably Pen", "Patrick Hand", "Inter", system-ui, sans-serif !important;
+  font-synthesis: none;
+}
+
+code, pre, kbd, .font-mono, .section-label {
+  font-family: "Geist Mono", "JetBrains Mono", ui-monospace, monospace !important;
+}
+
+/* ─── Iconos dibujados a mano con pulso firme en toda la aplicación ──────── */
+svg.lucide,
+button svg:not(.drawably-svg),
+a svg:not(.drawably-svg),
+nav svg:not(.drawably-svg),
+header svg:not(.drawably-svg),
+[role="tab"] svg:not(.drawably-svg),
+[role="menuitem"] svg:not(.drawably-svg),
+.section-label svg:not(.drawably-svg) {
+  filter: url(#drawably-pencil-icon);
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+  overflow: visible;
+}
+
+/* ─── Bordes dibujados a mano con pulso firme (sin temblor ni doble borde CSS) ─ */
+.drawably-svg {
+  /* Desactiva el parpadeo/temblor de drawably-boil para que los trazos sean firmes */
+  animation: none !important;
+}
+
+.drawably-rel-host {
+  position: relative;
+}
+
+.drawably-auto-host {
+  isolation: isolate;
+  /* Oculta el borde CSS rectangular nativo para que solo se vea el trazo limpio SVG */
+  border-color: transparent !important;
+}
+
+.drawably-auto-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.drawably-auto-host > *:not(.drawably-svg) {
+  position: relative;
+  z-index: 1;
+}
+
+/* Colores y grosores de trazo firme para cada tipo de componente Drawably */
+.drawably-kind-button-outline > .drawably-auto-svg path.drawably-outline {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+
+.drawably-kind-button-solid > .drawably-auto-svg path.drawably-outline {
+  stroke: var(--ink);
+  stroke-width: 1.65;
+}
+
+.drawably-kind-button-solid > .drawably-auto-svg path.drawably-primary-scribble {
+  stroke: rgba(255, 255, 255, 0.16);
+  stroke-width: 1.25;
+}
+
+.drawably-kind-card > .drawably-auto-svg path.drawably-outline {
+  stroke: var(--ink);
+  stroke-width: 1.45;
+}
+
+.drawably-kind-chip > .drawably-auto-svg path.drawably-outline {
+  stroke: var(--pen);
+  stroke-width: 1.35;
+}
+
+.drawably-kind-divider > .drawably-auto-svg path.drawably-outline {
+  stroke: var(--ink-2);
+  stroke-width: 1.25;
+}
+
+/* Segunda pasada sutil de lápiz/estilógrafo */
+.drawably-auto-svg path.drawably-outline-pass2 {
+  stroke-opacity: 0.36;
+  stroke-width: 1.05 !important;
+}
+
+/* ─── Superficies, tarjetas, menús, diálogos y campos a lápiz ────────────── */
+/* IMPORTANTE: sin backdrop-filter para respetar <RULE[AGENTS_md]> y no atrapar
+   position:fixed en portales ni menús. */
 :is(.glass, .glass-surface, .glass-control, .glass-menu, .glass-header,
   .panel, .surface, .surface-2, .neu-raised, .neu-inset,
   .bg-card, .bg-popover, .bg-background, .bg-surface-2, .bg-muted, .bg-secondary,
@@ -175,8 +334,8 @@ body {
   .m3-chip, .m3-list-item,
   .plus-glass-hero, .plus-glass-card, .plus-glass-note,
   .notification-summary-surface, .notification-category-panel, .notification-empty-state) {
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
 
 :is(.glass, .glass-surface, .glass-menu, .panel, .surface, .neu-raised,
@@ -184,39 +343,45 @@ body {
   [role="dialog"], [role="menu"], [role="listbox"],
   .plus-glass-hero, .plus-glass-card, .plus-glass-note,
   .notification-summary-surface, .notification-category-panel, .notification-empty-state) {
-  border-color: var(--glass-edge-muted);
-  box-shadow: var(--glass-highlight), var(--glass-shadow);
+  border: 1.5px solid var(--ink);
+  border-radius: 0.625rem;
+  box-shadow: var(--m3-elev-1);
 }
 
 [role="dialog"], [role="menu"], [role="listbox"] {
   background-color: var(--popover);
+  box-shadow: var(--m3-elev-3);
 }
 
+/* Inputs, textareas y selects con borde limpio de trazo firme */
 :is(input, textarea, select) {
-  border-radius: 0.875rem;
-  background-color: var(--glass-fill-soft);
-  border-color: var(--input);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
+  border-radius: 0.5rem;
+  background-color: var(--m3-surface-lowest);
+  border: 1.5px solid var(--ink);
+  box-shadow: 1.5px 1.5px 0 0 rgba(24, 24, 27, 0.12);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
+
 :is(input, textarea, select):focus-visible {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px var(--ring);
+  border-color: var(--pen);
+  box-shadow: 2px 2px 0 0 var(--pen);
+  outline: none;
 }
+
 input[type="checkbox"], input[type="radio"], input[type="range"], input[type="color"] {
   backdrop-filter: none;
   background-color: initial;
+  accent-color: var(--pen);
 }
+
 .search-field input:focus-visible {
   border-color: transparent;
   box-shadow: none;
   outline: none;
 }
 
-/* Campos dentro de un control compuesto (icono + input + botón, p. ej. el
-   login): el recuadro de cristal lo dibuja el contenedor, así que el input
-   interno no debe pintar su propio fondo, borde ni redondeo — si lo hace,
-   se sale de las esquinas redondeadas y el cursor/texto se ve recortado. */
+/* Campos dentro de un control compuesto (.glass-control, .search-field) */
 :is(.glass-control, .search-field) :is(input, textarea, select) {
   background-color: transparent !important;
   border: none !important;
@@ -226,7 +391,7 @@ input[type="checkbox"], input[type="radio"], input[type="range"], input[type="co
   backdrop-filter: none !important;
   -webkit-appearance: none;
   appearance: none;
-  caret-color: var(--primary);
+  caret-color: var(--pen);
   min-width: 0;
 }
 :is(.glass-control, .search-field) :is(input, textarea, select):focus,
@@ -235,91 +400,131 @@ input[type="checkbox"], input[type="radio"], input[type="range"], input[type="co
   box-shadow: none !important;
   border: none !important;
 }
-/* El texto seleccionado respeta el azul de la marca y no desborda el campo */
+
 ::selection {
-  background-color: oklch(0.45 0.15 264 / 0.25);
+  background-color: rgba(39, 36, 209, 0.22);
 }
 
-/* ─── Botón único: cristal azul oscuro ───────────────────────────────────── */
+/* ─── Botones primarios: tinta de bolígrafo azul Drawably (#2724d1) ──────── */
 :is(button, a)[class~="bg-primary"],
 .btn-grad,
 .grad-brand,
 .m3-btn {
   background-image: var(--glass-btn-fill) !important;
-  background-color: var(--primary) !important;
+  background-color: var(--pen) !important;
   color: var(--primary-foreground) !important;
-  border: 1px solid oklch(1 0 0 / 0.28) !important;
-  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.35), 0 8px 22px -10px oklch(0.45 0.15 264 / 0.6) !important;
-  -webkit-backdrop-filter: blur(12px) saturate(160%);
-  backdrop-filter: blur(12px) saturate(160%);
-  transition: transform .15s ease, box-shadow .2s ease, filter .2s ease;
+  border: 1.5px solid var(--ink);
+  border-radius: 0.5rem;
+  box-shadow: 2px 2.5px 0 0 var(--ink) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1), box-shadow 120ms cubic-bezier(0.2, 0, 0, 1);
 }
 :is(button, a)[class~="bg-primary"]:hover,
 .btn-grad:hover, .grad-brand:hover, .m3-btn:hover {
-  filter: brightness(1.08);
-  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.4), 0 12px 28px -10px oklch(0.45 0.15 264 / 0.7) !important;
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3.5px 0 0 var(--ink) !important;
 }
 :is(button, a)[class~="bg-primary"]:active,
 .btn-grad:active, .grad-brand:active, .m3-btn:active {
-  transform: scale(0.98);
+  transform: translate(1px, 1.5px);
+  box-shadow: 1px 1px 0 0 var(--ink) !important;
 }
 .m3-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
-  min-height: 2.5rem; padding: 0 1.25rem; border-radius: 999px;
+  min-height: 2.5rem; padding: 0 1.25rem;
   font-size: .875rem; font-weight: 500;
 }
 
-/* Botones secundarios / contorno / fantasma / icono: cristal claro */
+/* Botones secundarios / contorno / icono: papel de boceto con trazo firme */
 .glass-btn, .glass-control, .neu-btn, .m3-btn-outlined, .m3-icon-btn,
 button[class~="border-input"], button[class~="bg-secondary"], button[class~="bg-muted"],
-button[class~="bg-accent"] {
-  background-color: var(--glass-fill) !important;
-  border: 1px solid var(--glass-edge-muted) !important;
-  box-shadow: var(--glass-highlight), var(--glass-control-shadow);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+button[class~="bg-accent"], button[class~="bg-card"] {
+  background-color: var(--card) !important;
+  border: 1.5px solid var(--ink);
+  border-radius: 0.5rem;
+  box-shadow: 2px 2px 0 0 rgba(24, 24, 27, 0.16);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1), box-shadow 120ms cubic-bezier(0.2, 0, 0, 1), background-color 120ms ease;
 }
 .m3-btn.m3-btn-outlined {
   background-image: none !important;
-  color: var(--primary) !important;
+  background-color: var(--card) !important;
+  color: var(--pen) !important;
 }
 .m3-icon-btn {
   display: inline-grid; place-items: center; width: 2.5rem; height: 2.5rem;
-  border-radius: 999px; color: var(--ink-2);
+  border-radius: 999px;
+  color: var(--ink);
 }
 :is(.glass-btn, .glass-control, .m3-btn-outlined, .m3-icon-btn):hover {
-  background-color: var(--glass-fill-strong) !important;
+  background-color: color-mix(in srgb, var(--pen) 10%, var(--card)) !important;
+  transform: translateY(-1px);
+  box-shadow: 2.5px 3px 0 0 rgba(24, 24, 27, 0.22);
+}
+:is(.glass-btn, .glass-control, .m3-btn-outlined, .m3-icon-btn):active {
+  transform: translateY(1px);
+  box-shadow: 1px 1px 0 0 rgba(24, 24, 27, 0.18);
 }
 
-/* Tintes de marca: cristal azulado, nunca lavanda */
+/* Rellenos de acento achurados estilo marcador/lápiz */
 .grad-brand-soft, .grad-brand-deep {
-  background-image: none !important;
-  background-color: oklch(0.45 0.15 264 / 0.1) !important;
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(39, 36, 209, 0.09) 0px,
+    rgba(39, 36, 209, 0.09) 2px,
+    transparent 2px,
+    transparent 7px
+  ) !important;
+  background-color: var(--card) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
 
 /* ─── Clases utilitarias usadas por la app ───────────────────────────────── */
 .m3-surface-lowest { background-color: var(--m3-surface-lowest); }
 .m3-surface-highest { background-color: var(--m3-surface-highest); }
-.m3-elev-1 { box-shadow: var(--glass-highlight), var(--m3-elev-1); }
-.m3-elev-2 { box-shadow: var(--glass-highlight), var(--m3-elev-2); }
-.m3-elev-3 { box-shadow: var(--glass-highlight), var(--m3-elev-3); }
-.m3-card { background: var(--glass-fill); border: 1px solid var(--glass-edge-muted); border-radius: 1.25rem; }
-.m3-card-outlined { background: var(--glass-fill-soft); border: 1px solid var(--glass-edge-muted); border-radius: 1.25rem; }
+.m3-elev-1 { box-shadow: var(--m3-elev-1); }
+.m3-elev-2 { box-shadow: var(--m3-elev-2); }
+.m3-elev-3 { box-shadow: var(--m3-elev-3); }
+.m3-card {
+  background: var(--card);
+  border: 1.5px solid var(--ink);
+  border-radius: 0.625rem;
+  box-shadow: var(--m3-elev-1);
+}
+.m3-card-outlined {
+  background: var(--glass-fill-soft);
+  border: 1.5px dashed var(--ink);
+  border-radius: 0.625rem;
+}
 .m3-state { transition: background-color .15s ease; }
-.m3-state:hover { background-color: oklch(0.45 0.15 264 / 0.08); }
-.m3-state:active { background-color: oklch(0.45 0.15 264 / 0.14); }
+.m3-state:hover { background-color: rgba(39, 36, 209, 0.08); }
+.m3-state:active { background-color: rgba(39, 36, 209, 0.14); }
 .m3-scroll-x { overflow-x: auto; scrollbar-width: none; }
 .m3-scroll-x::-webkit-scrollbar { display: none; }
 .m3-chip {
   display: inline-flex; align-items: center; gap: .375rem; height: 2rem; padding: 0 .875rem;
-  border-radius: 999px; font-size: .8125rem; font-weight: 500;
-  background: var(--glass-fill); border: 1px solid var(--glass-edge-muted); color: var(--ink-2);
+  border-radius: 999px;
+  font-size: .8125rem; font-weight: 500;
+  background: var(--card); border: 1.5px solid var(--ink); color: var(--ink);
+  box-shadow: 1.5px 1.5px 0 0 rgba(24, 24, 27, 0.14);
 }
-.m3-chip-selected { background: oklch(0.45 0.15 264 / 0.14); border-color: var(--glass-blue-edge); color: var(--accent-foreground); }
-.m3-list-item { display: flex; align-items: center; gap: .75rem; min-height: 3.5rem; padding: 0 1rem; border-radius: 1rem; }
-.m3-text-field, .m3-text-field-outlined { width: 100%; height: 3rem; padding: 0 1rem; border: 1px solid var(--input); }
+.m3-chip-selected {
+  background: rgba(39, 36, 209, 0.14);
+  border-color: var(--pen);
+  color: var(--pen);
+}
+.m3-list-item {
+  display: flex; align-items: center; gap: .75rem; min-height: 3.5rem; padding: 0 1rem;
+  border-radius: 0.5rem;
+}
+.m3-text-field, .m3-text-field-outlined {
+  width: 100%; height: 3rem; padding: 0 1rem;
+  border: 1.5px solid var(--ink);
+  border-radius: 0.5rem;
+}
 .m3-display-large { font-size: 3.5rem; line-height: 4rem; font-weight: 400; }
 .m3-headline-small { font-size: 1.5rem; line-height: 2rem; font-weight: 500; }
 .m3-title-medium { font-size: 1rem; line-height: 1.5rem; font-weight: 500; }
@@ -330,150 +535,118 @@ button[class~="bg-accent"] {
 
 /* ─── Asternal Plus ──────────────────────────────────────────────────────── */
 .plus-page { --primary: var(--plus); --primary-foreground: var(--plus-on-primary); }
-.plus-page { --glass-btn-fill: linear-gradient(180deg, oklch(0.58 0.1 210 / 0.9), oklch(0.48 0.1 210 / 0.92)); }
-.profile-plus-benefits { border-color: var(--plus-outline) !important; background: var(--plus-container) !important; backdrop-filter: var(--glass-blur); }
+.profile-plus-benefits {
+  border: 1.5px solid var(--plus-outline) !important;
+  background: var(--plus-container) !important;
+  backdrop-filter: none !important;
+}
 .profile-plus-benefits-icon { background: var(--plus) !important; color: var(--plus-on-primary); }
 .profile-plus-benefits-chevron { color: var(--plus) !important; }
 
 /* ─── Notificaciones ─────────────────────────────────────────────────────── */
 .notification-filter-control-active {
-  background-color: oklch(0.45 0.15 264 / 0.14) !important;
-  box-shadow: inset 3px 0 0 var(--primary) !important;
+  background-color: rgba(39, 36, 209, 0.14) !important;
+  box-shadow: inset 3px 0 0 var(--pen) !important;
 }
-.notification-event-row-unread { background-color: oklch(0.45 0.15 264 / 0.08) !important; }
+.notification-event-row-unread { background-color: rgba(39, 36, 209, 0.08) !important; }
 
 /* ─── Accesibilidad ──────────────────────────────────────────────────────── */
-:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+:focus-visible { outline: 2px dashed var(--pen); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  :root { --card: oklch(1 0 0 / 0.95); --popover: oklch(1 0 0); }
-  .dark { --card: oklch(0.22 0.03 262 / 0.95); --popover: oklch(0.2 0.03 262); }
-}
 
-/* ─── Inicio de sesión ───────────────────────────────────────────────────── */
+/* ─── Inicio de sesión y menús en papel de cuaderno ──────────────────────── */
 .auth-grid {
   background-image:
-    linear-gradient(oklch(0.45 0.15 264 / 0.06) 1px, transparent 1px),
-    linear-gradient(90deg, oklch(0.45 0.15 264 / 0.06) 1px, transparent 1px);
-  background-size: 44px 44px;
-  mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+    linear-gradient(rgba(24, 24, 27, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(24, 24, 27, 0.08) 1px, transparent 1px);
+  background-size: 32px 32px;
 }
 .auth-card {
-  background: var(--glass-fill-strong) !important;
-  box-shadow: var(--glass-highlight), 0 30px 60px -24px oklch(0.3 0.1 262 / 0.35) !important;
+  background: var(--card) !important;
+  border: 1.5px solid var(--ink);
+  border-radius: 0.75rem !important;
+  box-shadow: 4px 4px 0 0 var(--ink) !important;
+  backdrop-filter: none !important;
 }
 
-/* ─── Menú lateral (tres rayitas): cristal claro ─────────────────────────── */
 .glass-menu-drawer {
-  background: var(--glass-fill-strong);
-  border-color: var(--glass-edge-muted);
-  box-shadow: var(--glass-highlight), -20px 0 50px -20px oklch(0.3 0.1 262 / 0.3);
-  -webkit-backdrop-filter: blur(28px) saturate(180%);
-  backdrop-filter: blur(28px) saturate(180%);
+  background: var(--popover);
+  border-left: 1.5px solid var(--ink);
+  box-shadow: -4px 0 0 0 rgba(24, 24, 27, 0.18);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
 .menu-drawer .menu-action { transition: background-color .15s ease; }
-.menu-drawer .menu-action:hover { background-color: oklch(0.45 0.15 264 / 0.08); }
+.menu-drawer .menu-action:hover { background-color: rgba(39, 36, 209, 0.09); }
 
-/* ─── Velos oscuros → velo de cristal claro ──────────────────────────────── */
+/* ─── Velos de diálogo con tramado a lápiz ───────────────────────────────── */
 .fixed[class*="bg-black/"],
 [data-state][class*="bg-black/"] {
-  background-color: oklch(0.35 0.08 262 / 0.18) !important;
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
-}
-.dark .fixed[class*="bg-black/"],
-.dark [data-state][class*="bg-black/"] {
-  background-color: oklch(0.1 0.03 262 / 0.45) !important;
+  background-color: rgba(24, 24, 27, 0.32) !important;
+  background-image: radial-gradient(rgba(24, 24, 27, 0.18) 1px, transparent 0) !important;
+  background-size: 6px 6px !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
 
-/* ─── Editor de juegos (Studio) ──────────────────────────────────────────── */
+/* ─── Editor de juegos (Studio) en estilo cuaderno de bocetos ────────────── */
 .editor-shell {
-  background:
-    radial-gradient(50rem 30rem at 0% 0%, oklch(0.45 0.15 264 / 0.12), transparent 60%),
-    radial-gradient(40rem 26rem at 100% 100%, oklch(0.72 0.08 236 / 0.14), transparent 60%),
-    var(--canvas);
+  background-color: var(--paper);
+  background-image:
+    radial-gradient(rgba(24, 24, 27, 0.08) 1px, transparent 0),
+    linear-gradient(to right, rgba(24, 24, 27, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(24, 24, 27, 0.035) 1px, transparent 1px);
+  background-size: 20px 20px, 40px 40px, 40px 40px;
 }
-.editor-rail, .editor-bar {
-  background: var(--glass-fill-strong);
-  border-color: var(--glass-edge-muted);
-  box-shadow: var(--glass-highlight);
-  -webkit-backdrop-filter: blur(22px) saturate(180%);
-  backdrop-filter: blur(22px) saturate(180%);
+.editor-rail, .editor-bar, .app-header {
+  background: var(--card) !important;
+  border-color: var(--ink) !important;
+  box-shadow: 0 2px 0 0 rgba(24, 24, 27, 0.18);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
 .editor-fab-group {
-  background: var(--glass-fill-strong);
-  border: 1px solid var(--glass-edge-muted);
-  box-shadow: var(--glass-highlight), var(--m3-elev-2);
-  -webkit-backdrop-filter: blur(18px) saturate(170%);
-  backdrop-filter: blur(18px) saturate(170%);
+  background: var(--card);
+  border: 1.5px solid var(--ink);
+  border-radius: 0.75rem;
+  box-shadow: 2.5px 3px 0 0 var(--ink);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
-.editor-fab { background: transparent; border: 1px solid transparent; transition: background-color .15s ease, color .15s ease; }
-.editor-fab:hover { background: oklch(0.45 0.15 264 / 0.1); }
+.editor-fab {
+  background: transparent;
+  border: 1.5px solid transparent;
+  border-radius: 0.5rem;
+  transition: background-color .15s ease, color .15s ease;
+}
+.editor-fab:hover {
+  background: rgba(39, 36, 209, 0.10);
+  border-color: var(--ink);
+}
 :is(.editor-bar, .editor-rail, .editor-shell) :is(a, button)[class~="bg-card"] {
-  background-color: var(--glass-fill) !important;
-  border-color: var(--glass-edge-muted) !important;
-  box-shadow: var(--glass-highlight), var(--m3-elev-1);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background-color: var(--card) !important;
+  border: 1.5px solid var(--ink);
+  box-shadow: 2px 2px 0 0 rgba(24, 24, 27, 0.18);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
 
-/* ─── Pantalla de acceso: escena con degradado azul y auroras ───────────── */
 .auth-scene {
-  background:
-    radial-gradient(70rem 46rem at 12% -12%, oklch(0.45 0.15 264 / 0.32), transparent 62%),
-    radial-gradient(56rem 40rem at 108% 18%, oklch(0.62 0.14 258 / 0.26), transparent 60%),
-    radial-gradient(60rem 44rem at 50% 118%, oklch(0.5 0.16 264 / 0.24), transparent 64%),
-    linear-gradient(160deg, oklch(0.96 0.012 258), oklch(0.9 0.03 260) 45%, oklch(0.86 0.045 262));
-}
-.dark .auth-scene {
-  background:
-    radial-gradient(70rem 46rem at 12% -12%, oklch(0.5 0.16 264 / 0.4), transparent 62%),
-    radial-gradient(56rem 40rem at 108% 18%, oklch(0.62 0.14 258 / 0.28), transparent 60%),
-    radial-gradient(60rem 44rem at 50% 118%, oklch(0.45 0.15 264 / 0.34), transparent 64%),
-    linear-gradient(160deg, oklch(0.16 0.03 264), oklch(0.13 0.035 264) 50%, oklch(0.11 0.03 266));
+  background-color: var(--paper);
+  background-image:
+    radial-gradient(rgba(39, 36, 209, 0.10) 1.25px, transparent 0),
+    linear-gradient(to right, rgba(24, 24, 27, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(24, 24, 27, 0.04) 1px, transparent 1px);
+  background-size: 24px 24px, 48px 48px, 48px 48px;
 }
 .auth-orb {
-  position: absolute;
-  border-radius: 9999px;
-  filter: blur(70px);
-  opacity: 0.55;
-  animation: auth-drift 14s ease-in-out infinite alternate;
-  will-change: transform;
+  display: none;
 }
-.auth-orb-1 { background: oklch(0.5 0.16 264 / 0.5); }
-.auth-orb-2 { background: oklch(0.68 0.12 236 / 0.45); animation-duration: 18s; animation-delay: -6s; }
-.auth-orb-3 { background: oklch(0.58 0.14 258 / 0.4); animation-duration: 22s; animation-delay: -11s; }
-@keyframes auth-drift {
-  from { transform: translate3d(0, 0, 0) scale(1); }
-  to   { transform: translate3d(4rem, -3rem, 0) scale(1.12); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .auth-orb { animation: none; }
-}
-/* Tarjeta de acceso: cristal denso con borde luminoso y halo */
-.auth-card {
-  background: oklch(1 0 0 / 0.66);
-  border: 1px solid oklch(1 0 0 / 0.8);
-  box-shadow:
-    inset 0 1px 0 oklch(1 0 0 / 0.9),
-    0 24px 60px -18px oklch(0.4 0.14 264 / 0.35),
-    0 4px 16px -6px oklch(0.4 0.14 264 / 0.2);
-  -webkit-backdrop-filter: blur(26px) saturate(180%);
-  backdrop-filter: blur(26px) saturate(180%);
-}
-.dark .auth-card {
-  background: oklch(0.22 0.03 262 / 0.6);
-  border-color: oklch(1 0 0 / 0.14);
-  box-shadow:
-    inset 0 1px 0 oklch(1 0 0 / 0.12),
-    0 24px 60px -18px oklch(0 0 0 / 0.7);
-}
-/* Titular con degradado de marca */
 .auth-gradient-text {
-  background: linear-gradient(100deg, var(--primary), var(--primary-glow) 70%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  background: none;
+  color: var(--pen);
+  text-decoration: underline solid var(--pen) 2px;
+  text-underline-offset: 4px;
 }

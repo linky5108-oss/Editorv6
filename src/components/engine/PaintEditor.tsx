@@ -82,14 +82,14 @@ import {
   Eye, EyeOff, Lock, Unlock, ChevronUp, ChevronDown, Copy, Trash2, Layers,
   Undo2, Redo2, Plus, X, Check, SlidersHorizontal, Grid,
   Maximize2, AlertTriangle, FlipHorizontal2, FlipVertical2, ImagePlus,
-  Scissors, ClipboardPaste,
+  Scissors, ClipboardPaste, Scan, Lasso,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
-type Tool = "brush" | "eraser" | "fill" | "shape" | "picker" | "text" | "move";
+type Tool = "brush" | "eraser" | "fill" | "shape" | "picker" | "text" | "select" | "move";
 
 interface Props {
   onSave: (sprite: SpriteAsset) => void;
@@ -114,7 +114,7 @@ const BRUSH_PRESETS = [2, 4, 8, 16, 32];
 
 /** Atajos de una letra para elegir herramienta (misma letra que la etiqueta). */
 const TOOL_BY_KEY: Record<string, Tool> = {
-  b: "brush", e: "eraser", g: "fill", s: "shape", i: "picker", t: "text", v: "move",
+  b: "brush", e: "eraser", g: "fill", s: "shape", i: "picker", t: "text", m: "select", v: "move",
 };
 
 /**
@@ -1260,7 +1260,7 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
     if (drag.current.active && drag.current.selectionActive && selectionPointsRef.current.length > 1) {
       drawSelectionMarquee(
         ctx,
-        selectionMode === "lasso" ? "lasso" : "rect",
+        drag.current.selectionKind === "lasso" ? "lasso" : "rect",
         selectionPointsRef.current,
         displayScale.current,
       );
@@ -1351,10 +1351,10 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
   }, [sizeW, sizeH]);
 
   useEffect(() => {
-    if (tool !== "move" && floatingRasterRef.current) {
+    if (tool !== "move" && tool !== "select" && floatingRasterRef.current) {
       commitFloatingRaster();
     }
-    if (tool !== "move") setHoverHandle(null);
+    if (tool !== "move" && tool !== "select") setHoverHandle(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tool]);
 
@@ -1484,6 +1484,7 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
     shapeStart?: ShapeObject | null;
     rasterActive?: boolean;
     selectionActive?: boolean;
+    selectionKind?: "rect" | "lasso";
   }>({ active: false, tool: "brush", last: { x: 0, y: 0 }, start: { x: 0, y: 0 }, smooth: { x: 0, y: 0 } });
 
   const strokeBackup = useRef<HTMLCanvasElement | null>(null);
@@ -1793,8 +1794,10 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
       blit(ctx => paintShape(ctx, draft));
       return;
     }
-    if (tool === "move") {
+    if (tool === "move" || tool === "select") {
       const s = displayScale.current;
+      const effectiveSelectionMode: SelectionMode =
+        tool === "select" ? (selectionMode === "lasso" ? "lasso" : "rect") : selectionMode;
 
       // 1. Si ya hay un texto seleccionado, comprobar primero sus tiradores de transformación.
       const activeText = findText(selectedTextIdRef.current);
@@ -1884,8 +1887,8 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
         commitFloatingRaster(false);
       }
 
-      // Si el modo de selección es Rectangular o Lazo, empezar a trazar el área de selección.
-      if ((selectionMode === "rect" || selectionMode === "lasso") && isLayerEditable()) {
+      // Si la herramienta es Seleccionar o el modo es Marco/Lazo, empezar a trazar el área de selección.
+      if ((effectiveSelectionMode === "rect" || effectiveSelectionMode === "lasso") && isLayerEditable()) {
         selectText(null);
         selectShape(null);
         selectionPointsRef.current = [{ x: p.x, y: p.y }];
@@ -1896,6 +1899,7 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
           start: p,
           smooth: p,
           selectionActive: true,
+          selectionKind: effectiveSelectionMode,
         };
         recomposite();
         blit();
@@ -1960,9 +1964,9 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
         return;
       }
 
-      // 6. Si no se tocó ni texto ni forma y no había nada seleccionado, levantar
-      // los trazos pintados de la capa activa como selección transformable si el
-      // toque cae sobre los trazos de la capa activa.
+      // 6. Si no se tocó ni texto ni forma y no había nada seleccionado:
+      // si el toque cae directamente sobre un píxel pintado en modo Auto, levantar
+      // los trazos; si cae en espacio vacío, trazar un área de selección rectangular.
       const hadObjectSelection = !!(selectedTextIdRef.current || selectedShapeIdRef.current);
       selectText(null);
       selectShape(null);
@@ -1971,15 +1975,23 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
         if (layer) {
           const lctx = layer.canvas.getContext("2d")!;
           const img = lctx.getImageData(0, 0, sizeW, sizeH);
-          const bounds = findNonEmptyPixelBounds(img);
-          const pad = 12;
-          if (
-            bounds &&
-            p.x >= bounds.x - pad &&
-            p.x <= bounds.x + bounds.w + pad &&
-            p.y >= bounds.y - pad &&
-            p.y <= bounds.y + bounds.h + pad
-          ) {
+          const px = Math.max(0, Math.min(sizeW - 1, Math.floor(p.x)));
+          const py = Math.max(0, Math.min(sizeH - 1, Math.floor(p.y)));
+          let touchedPaintedPixel = false;
+          for (let dy = -6; dy <= 6 && !touchedPaintedPixel; dy++) {
+            for (let dx = -6; dx <= 6; dx++) {
+              const nx = px + dx;
+              const ny = py + dy;
+              if (nx >= 0 && nx < sizeW && ny >= 0 && ny < sizeH) {
+                if (img.data[(ny * sizeW + nx) * 4 + 3] > 8) {
+                  touchedPaintedPixel = true;
+                  break;
+                }
+              }
+            }
+          }
+          const bounds = touchedPaintedPixel ? findNonEmptyPixelBounds(img) : null;
+          if (bounds) {
             pushSnapshot();
             captureStrokeBackup();
             const srcCanvas = document.createElement("canvas");
@@ -2015,6 +2027,20 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
             recomposite(); blit();
             return;
           }
+          // Arrastrar desde espacio vacío inicia una selección de área rectangular
+          selectionPointsRef.current = [{ x: p.x, y: p.y }];
+          drag.current = {
+            active: true,
+            tool,
+            last: p,
+            start: p,
+            smooth: p,
+            selectionActive: true,
+            selectionKind: "rect",
+          };
+          recomposite();
+          blit();
+          return;
         }
       }
 
@@ -2072,7 +2098,7 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
 
   const onMove = (e: React.PointerEvent) => {
     if (!drag.current.active) {
-      if (tool === "move" && e.pointerType !== "touch") {
+      if ((tool === "move" || tool === "select") && e.pointerType !== "touch") {
         const p = getPos(e);
         const s = displayScale.current;
         const activeText = findText(selectedTextIdRef.current);
@@ -2172,18 +2198,18 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
     } else if (drag.current.tool === "shape") {
       const draft = shapeDraftAt(drag.current.start.x, drag.current.start.y, p.x, p.y, e.shiftKey);
       blit(ctx => paintShape(ctx, draft));
-    } else if (drag.current.tool === "move" && drag.current.selectionActive) {
+    } else if ((drag.current.tool === "move" || drag.current.tool === "select") && drag.current.selectionActive) {
       const pts = selectionPointsRef.current;
       const lastPt = pts[pts.length - 1];
       if (!lastPt || Math.hypot(p.x - lastPt.x, p.y - lastPt.y) >= 1) {
-        if (selectionMode === "rect") {
+        if (drag.current.selectionKind === "rect") {
           selectionPointsRef.current = [pts[0] ?? p, { x: p.x, y: p.y }];
         } else {
           selectionPointsRef.current.push({ x: p.x, y: p.y });
         }
         blit();
       }
-    } else if (drag.current.tool === "move" && drag.current.rasterActive && floatingRasterRef.current && drag.current.transformStartBox) {
+    } else if ((drag.current.tool === "move" || drag.current.tool === "select") && drag.current.rasterActive && floatingRasterRef.current && drag.current.transformStartBox) {
       const startBox = drag.current.transformStartBox;
       const handle = drag.current.transformHandle ?? "body";
       if (handle === "body" || handle === "clone") {
@@ -2201,7 +2227,7 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
         floatingRasterRef.current.box = computeScaledBox(startBox, handle, p.x, p.y, e.shiftKey, 4);
       }
       recomposite(); blit();
-    } else if (drag.current.tool === "move" && drag.current.shapeId && drag.current.shapeLayerId && drag.current.shapeStart && drag.current.transformStartBox) {
+    } else if ((drag.current.tool === "move" || drag.current.tool === "select") && drag.current.shapeId && drag.current.shapeLayerId && drag.current.shapeStart && drag.current.transformStartBox) {
       const id = drag.current.shapeId;
       const layerId = drag.current.shapeLayerId;
       const s0 = drag.current.shapeStart;
@@ -2238,7 +2264,7 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
           : l,
       );
       recomposite(); blit();
-    } else if (drag.current.tool === "move" && drag.current.textId && drag.current.textLayerId && drag.current.textStart && drag.current.transformStartBox) {
+    } else if ((drag.current.tool === "move" || drag.current.tool === "select") && drag.current.textId && drag.current.textLayerId && drag.current.textStart && drag.current.transformStartBox) {
       const id = drag.current.textId;
       const layerId = drag.current.textLayerId;
       const t0 = drag.current.textStart;
@@ -2323,15 +2349,16 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
         addShapeObject({ ...draft, id: uid() });
         recomposite(); blit();
       }
-    } else if (t === "move" && drag.current.selectionActive) {
+    } else if ((t === "move" || t === "select") && drag.current.selectionActive) {
       const pts = selectionPointsRef.current;
+      const selKind = drag.current.selectionKind ?? (selectionMode === "lasso" ? "lasso" : "rect");
       selectionPointsRef.current = [];
       drag.current.selectionActive = false;
       const layer = activeLayer();
       if (layer && isLayerEditable() && pts.length >= 2) {
         const lctx = layer.canvas.getContext("2d")!;
         const img = lctx.getImageData(0, 0, sizeW, sizeH);
-        if (selectionMode === "rect") {
+        if (selKind === "rect") {
           const p0 = pts[0];
           const p1 = pts[pts.length - 1];
           const rx = Math.max(0, Math.floor(Math.min(p0.x, p1.x)));
@@ -2359,7 +2386,7 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
               setHasFloatingRaster(true);
             }
           }
-        } else if (selectionMode === "lasso" && pts.length >= 3) {
+        } else if (selKind === "lasso" && pts.length >= 3) {
           const bounds = findLassoPixelBounds(img, pts);
           if (bounds) {
             pushSnapshot();
@@ -2402,7 +2429,7 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
       }
       recomposite();
       blit();
-    } else if (t === "move") {
+    } else if (t === "move" || t === "select") {
       const tapDist = Math.hypot(p.x - drag.current.start.x, p.y - drag.current.start.y) * displayScale.current;
       const handle = drag.current.transformHandle;
       if (handle === "clone" && tapDist < 6) {
@@ -3129,6 +3156,7 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
     { id: "shape", icon: <ShapeGlyph shape={shapeKind} size={20} />, title: "Formas", key: "S" },
     { id: "picker", icon: <Pipette size={20} strokeWidth={1.9} />, title: "Cuentagotas", key: "I" },
     { id: "text", icon: <Type size={20} strokeWidth={1.9} />, title: "Texto", key: "T" },
+    { id: "select", icon: <Scan size={20} strokeWidth={1.9} />, title: "Seleccionar", key: "M" },
     { id: "move", icon: <Move size={20} strokeWidth={1.9} />, title: "Mover", key: "V" },
   ];
 
@@ -3147,8 +3175,12 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
     : "0%";
 
   const canvasCursorClass =
-    tool === "move"
-      ? cursorForHandle(hoverHandle)
+    tool === "move" || tool === "select"
+      ? hoverHandle
+        ? cursorForHandle(hoverHandle)
+        : tool === "select"
+          ? "cursor-crosshair"
+          : cursorForHandle(hoverHandle)
       : tool === "text"
         ? "cursor-text"
         : "cursor-crosshair";
@@ -3253,7 +3285,12 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
             return (
               <button
                 key={t.id}
-                onClick={() => setTool(t.id)}
+                onClick={() => {
+                  if (t.id === "select" && selectionMode === "auto") {
+                    setSelectionMode("rect");
+                  }
+                  setTool(t.id);
+                }}
                 title={`${t.title} (${t.key})`}
                 aria-label={t.title}
                 aria-pressed={on}
@@ -3451,6 +3488,104 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
                 </div>
               </PopoverContent>
             </Popover>
+
+            {/* Controles rápidos de Selección de Área y Transformación */}
+            <div className="inline-flex items-center gap-1 rounded-full border border-line bg-card p-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectionMode("rect");
+                  setTool("select");
+                }}
+                aria-pressed={(tool === "select" || tool === "move") && selectionMode !== "lasso"}
+                title="Seleccionar área rectangular para transformar (M)"
+                className={`inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition ${
+                  tool === "select" && selectionMode !== "lasso"
+                    ? "bg-accent text-accent-foreground"
+                    : "text-ink-2 hover:bg-muted hover:text-foreground"
+                }`}
+              >
+                <Scan size={14} />
+                <span>Marco</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectionMode("lasso");
+                  setTool("select");
+                }}
+                aria-pressed={(tool === "select" || tool === "move") && selectionMode === "lasso"}
+                title="Seleccionar área con lazo libre para transformar"
+                className={`inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition ${
+                  (tool === "select" || tool === "move") && selectionMode === "lasso"
+                    ? "bg-accent text-accent-foreground"
+                    : "text-ink-2 hover:bg-muted hover:text-foreground"
+                }`}
+              >
+                <Lasso size={14} />
+                <span>Lazo</span>
+              </button>
+            </div>
+
+            {(hasFloatingRaster || selectedShape || selectedText) && (
+              <div className="inline-flex flex-wrap items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-1">
+                <button
+                  type="button"
+                  onClick={() => flipActiveTarget("x")}
+                  title="Voltear selección horizontalmente"
+                  className="inline-flex h-7 items-center gap-1 rounded-full px-2 text-[11px] font-medium text-foreground hover:bg-accent transition"
+                >
+                  <FlipHorizontal2 size={13} />
+                  <span className="hidden sm:inline">Voltear H</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => flipActiveTarget("y")}
+                  title="Voltear selección verticalmente"
+                  className="inline-flex h-7 items-center gap-1 rounded-full px-2 text-[11px] font-medium text-foreground hover:bg-accent transition"
+                >
+                  <FlipVertical2 size={13} />
+                  <span className="hidden sm:inline">Voltear V</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (hasFloatingRaster) duplicateFloatingRaster();
+                    else if (selectedShape) duplicateSelectedShape();
+                    else if (selectedText) duplicateSelectedText();
+                  }}
+                  title="Duplicar selección (Ctrl+D)"
+                  className="inline-flex h-7 items-center gap-1 rounded-full px-2 text-[11px] font-medium text-foreground hover:bg-accent transition"
+                >
+                  <Copy size={13} />
+                  <span className="hidden sm:inline">Duplicar</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (hasFloatingRaster) deleteFloatingRaster();
+                    else if (selectedShape) deleteSelectedShape();
+                    else if (selectedText) deleteSelectedText();
+                  }}
+                  title="Borrar área seleccionada (Supr)"
+                  className="inline-flex h-7 items-center gap-1 rounded-full px-2 text-[11px] font-medium text-destructive hover:bg-destructive/15 transition"
+                >
+                  <Trash2 size={13} />
+                  <span className="hidden sm:inline">Borrar</span>
+                </button>
+                {hasFloatingRaster && (
+                  <button
+                    type="button"
+                    onClick={() => commitFloatingRaster(true)}
+                    title="Aplicar transformación (Enter)"
+                    className="inline-flex h-7 items-center gap-1 rounded-full bg-primary px-2.5 text-[11px] font-semibold text-primary-foreground hover:opacity-90 transition"
+                  >
+                    <Check size={13} />
+                    <span>Aplicar</span>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
           {/* Aviso de capa no editable: franja propia, sin tapar el lienzo */}
           {!activeEditable && (

@@ -162,6 +162,31 @@ describe("lectura del JSON de la IA", () => {
     ]);
   });
 
+  it("acepta respuestas multilínea de Prexzy con \\\\n (barra + salto real) y comillas anidadas en customRuntimeJs", () => {
+    const prexzyMultiline =
+      '```json\n{\n  \\"reply\\": \\"Soy Orión.\\",\n  \\"customRuntimeJs\\": \\"window.AsternalRuntime.registerHook({\\\n  onInit(api) {\\\n    console.log(\\\\\\"ok\\\\\\");\\\n  }\\\n});\\",\n  \\"appendRuntimeJs\\": true\n}\n```';
+    const parsed = parseAiJson<{ reply: string; customRuntimeJs: string; appendRuntimeJs: boolean }>(prexzyMultiline);
+    expect(parsed.reply).toBe("Soy Orión.");
+    expect(parsed.customRuntimeJs).toContain('console.log("ok");');
+    expect(parsed.appendRuntimeJs).toBe(true);
+  });
+
+  it("extrae un objeto JSON aunque haya corchetes en el texto introductorio", () => {
+    const conPrefijo = 'Para [Jugador]:\n{\n  "reply": "Listo",\n  "changesSummary": ["Salto doble"]\n}';
+    expect(parseAiJson<{ reply: string; changesSummary: string[] }>(conPrefijo)).toEqual({
+      reply: "Listo",
+      changesSummary: ["Salto doble"],
+    });
+  });
+
+  it("repara comillas internas sin escapar y comas finales", () => {
+    const conComillasInternas = '{\n  "reply": "Hola "creador", listo",\n  "appendRuntimeJs": true,\n}';
+    expect(parseAiJson<{ reply: string; appendRuntimeJs: boolean }>(conComillasInternas)).toEqual({
+      reply: 'Hola "creador", listo',
+      appendRuntimeJs: true,
+    });
+  });
+
   it("avisa cuando no hay JSON utilizable", () => {
     expect(() => parseAiJson("esto no es json")).toThrow("no devolvió un JSON válido");
     expect(() => parseAiJson("   ")).toThrow("no devolvió nada");

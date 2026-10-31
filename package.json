@@ -55,6 +55,7 @@
     "cmdk": "^1.1.1",
     "convex": "^1.45.0",
     "date-fns": "^4.1.0",
+    "drawably": "^0.4.2",
     "embla-carousel-react": "^8.6.0",
     "express": "^5.2.1",
     "firebase": "^13.0.0",

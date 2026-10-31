@@ -67,39 +67,44 @@ export async function invokeLLM(request: LLMRequest): Promise<LLMResponse> {
 
   const conversationTurns = request.messages.filter((m) => m.role !== "system");
 
-  // 1) Ruta principal: SDK oficial @google/genai en el servidor
+  // 1) Ruta principal: SDK oficial @google/genai en el servidor (con reintento en modelos alternativos si hay sobrecarga 503)
   const ai = getGeminiClient();
   if (ai) {
-    try {
-      const modelName = resolveGeminiModel(request.model);
-      const contents =
-        conversationTurns.length > 0
-          ? conversationTurns.map((m) => ({
-              role: m.role === "assistant" ? ("model" as const) : ("user" as const),
-              parts: [{ text: extractMessageText(m.content) }],
-            }))
-          : [{ role: "user" as const, parts: [{ text: systemInstruction || "Hola" }] }];
+    const primaryModel = resolveGeminiModel(request.model);
+    const candidateModels = Array.from(
+      new Set([primaryModel, "gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]),
+    );
+    const contents =
+      conversationTurns.length > 0
+        ? conversationTurns.map((m) => ({
+            role: m.role === "assistant" ? ("model" as const) : ("user" as const),
+            parts: [{ text: extractMessageText(m.content) }],
+          }))
+        : [{ role: "user" as const, parts: [{ text: systemInstruction || "Hola" }] }];
 
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents,
-        config: {
-          ...(systemInstruction ? { systemInstruction } : {}),
-          ...(typeof request.temperature === "number" ? { temperature: request.temperature } : {}),
-          ...(request.responseMimeType ? { responseMimeType: request.responseMimeType } : {}),
-        },
-      });
-
-      const text = response.text?.trim() ?? "";
-      if (text) {
-        return {
+    for (const modelName of candidateModels) {
+      try {
+        const response = await ai.models.generateContent({
           model: modelName,
-          choices: [{ message: { content: text } }],
-        };
+          contents,
+          config: {
+            ...(systemInstruction ? { systemInstruction } : {}),
+            ...(typeof request.temperature === "number" ? { temperature: request.temperature } : {}),
+            ...(request.responseMimeType ? { responseMimeType: request.responseMimeType } : {}),
+          },
+        });
+
+        const text = response.text?.trim() ?? "";
+        if (text) {
+          return {
+            model: modelName,
+            choices: [{ message: { content: text } }],
+          };
+        }
+      } catch (err) {
+        console.error(`[invokeLLM @google/genai error (${modelName})]`, err);
+        // Intenta el siguiente modelo de respaldo o continúa al siguiente proveedor
       }
-    } catch (err) {
-      console.error("[invokeLLM @google/genai error]", err);
-      // Continúa al siguiente proveedor real si falla la clave local
     }
   }
 
@@ -122,10 +127,13 @@ export async function invokeLLM(request: LLMRequest): Promise<LLMResponse> {
     }
   }
 
-  // 3) Tercera ruta real: servicio Gemini directo
+  // 3) Tercera ruta real: servicio Gemini directo (conservando siempre el turno del usuario y la exigencia de JSON al final)
   const combinedPrompt = [
     systemInstruction ? `INSTRUCCIONES DEL SISTEMA:\n${systemInstruction}` : "",
     ...conversationTurns.map((m) => `${m.role === "assistant" ? "ASISTENTE" : "USUARIO"}:\n${extractMessageText(m.content)}`),
+    request.responseMimeType === "application/json"
+      ? "IMPORTANTE: Devuelve ÚNICAMENTE un objeto JSON válido, sin texto conversacional fuera del JSON."
+      : "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -134,7 +142,7 @@ export async function invokeLLM(request: LLMRequest): Promise<LLMResponse> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      prompt: combinedPrompt.slice(0, 16_000),
+      prompt: combinedPrompt.slice(-48_000),
       session_id: `orion-srv-${Date.now().toString(36)}`,
     }),
   });

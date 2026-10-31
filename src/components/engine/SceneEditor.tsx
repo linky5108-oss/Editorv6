@@ -1,9 +1,18 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Entity, EntityKind, Scene } from "@/lib/engine/core";
 import {
-  KIND_PRESETS, uid, sortedForRender, isOnHiddenLayer, layerOpacityFor, isPlayerEntity,
-  duplicateEntityInScene, CLONE_OFFSET,
-  childrenOf, entityById, removeEntityWithChildren, setEntityPosition,
+  KIND_PRESETS,
+  uid,
+  sortedForRender,
+  isOnHiddenLayer,
+  layerOpacityFor,
+  isPlayerEntity,
+  isMainGoalEntity,
+  duplicateEntityInScene,
+  childrenOf,
+  entityById,
+  removeEntityWithChildren,
+  setEntityPosition,
 } from "@/lib/engine/core";
 import { canvasPixelSize, needsCanvasResize } from "@/lib/engine/canvas";
 import { getImage, getRenderableImage } from "@/lib/engine/images";
@@ -20,8 +29,7 @@ interface Props {
 
 type HandleId = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 const HANDLES: HandleId[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
-const HANDLE_PX = 14;
-const SNAP_OPTIONS = [0, 8, 20, 40] as const;
+const HANDLE_PX = 12;
 
 function handlePos(e: Entity, h: HandleId) {
   const cx = e.x + e.w / 2;
@@ -38,147 +46,100 @@ function handlePos(e: Entity, h: HandleId) {
   }
 }
 
-function resizeEntity(e: Entity, h: HandleId, wx: number, wy: number, snap: number): Entity {
-  const sn = (v: number) => snap > 0 ? Math.round(v / snap) * snap : Math.round(v);
-  const minSize = Math.max(snap || 8, 8);
+function resizeEntity(e: Entity, h: HandleId, wx: number, wy: number): Entity {
+  const sn = (v: number) => Math.round(v / 10) * 10;
   let { x, y, w, h: he } = e;
   const right = x + w;
   const bottom = y + he;
-  if (h.includes("w")) { const nx = Math.min(sn(wx), right - minSize); w = right - nx; x = nx; }
-  if (h.includes("e")) { const nr = Math.max(sn(wx), x + minSize); w = nr - x; }
-  if (h.includes("n")) { const ny = Math.min(sn(wy), bottom - minSize); he = bottom - ny; y = ny; }
-  if (h.includes("s")) { const nb = Math.max(sn(wy), y + minSize); he = nb - y; }
+  if (h.includes("w")) { const nx = Math.min(sn(wx), right - 10); w = right - nx; x = nx; }
+  if (h.includes("e")) { const nr = Math.max(sn(wx), x + 10); w = nr - x; }
+  if (h.includes("n")) { const ny = Math.min(sn(wy), bottom - 10); he = bottom - ny; y = ny; }
+  if (h.includes("s")) { const nb = Math.max(sn(wy), y + 10); he = nb - y; }
   return { ...e, x, y, w, h: he };
 }
 
-export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Props) {
+export function SceneEditor({
+  scene,
+  tool,
+  selectedId,
+  onSelect,
+  onChange,
+}: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [scale, setScale] = useState(0.55);
-  const [snap, setSnap] = useState<number>(20);
   const animRef = useRef(0);
 
-  // ---------- Undo / Redo history ----------
-  const undoStack = useRef<Scene[]>([]);
-  const redoStack = useRef<Scene[]>([]);
-  const lastScene = useRef<Scene>(scene);
-  const applyingHistory = useRef(false);
-  const [, forceTick] = useState(0);
-  const refreshUI = () => forceTick(t => t + 1);
+  const fitSceneToViewport = useCallback(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const w = wrap.clientWidth;
+    const h = wrap.clientHeight;
+    if (w < 40 || h < 40) return;
+    const s = Math.min(w / scene.width, h / scene.height) * 0.92;
+    setScale(s);
+    setPan({
+      x: (w - scene.width * s) / 2,
+      y: (h - scene.height * s) / 2,
+    });
+  }, [scene.width, scene.height]);
 
   useEffect(() => {
-    if (applyingHistory.current) {
-      applyingHistory.current = false;
-      lastScene.current = scene;
-      return;
-    }
-    if (lastScene.current !== scene && lastScene.current.id === scene.id) {
-      undoStack.current.push(lastScene.current);
-      if (undoStack.current.length > 80) undoStack.current.shift();
-      redoStack.current = [];
-    }
-    lastScene.current = scene;
-  }, [scene]);
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    fitSceneToViewport();
+    const ro = new ResizeObserver(fitSceneToViewport);
+    ro.observe(wrap);
+    window.addEventListener("resize", fitSceneToViewport);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", fitSceneToViewport);
+    };
+  }, [fitSceneToViewport, scene.id]);
 
-  const undo = useCallback(() => {
-    const prev = undoStack.current.pop();
-    if (!prev) return;
-    redoStack.current.push(lastScene.current);
-    applyingHistory.current = true;
-    onChange(prev);
-    refreshUI();
-  }, [onChange]);
-
-  const redo = useCallback(() => {
-    const next = redoStack.current.pop();
-    if (!next) return;
-    undoStack.current.push(lastScene.current);
-    applyingHistory.current = true;
-    onChange(next);
-    refreshUI();
-  }, [onChange]);
-
-  // ---------- Entity ops ----------
-  const selected = scene.entities.find(e => e.id === selectedId) ?? null;
-
-  const duplicateSelected = useCallback(() => {
-    if (!selected) return;
-    // Alineado a la rejilla cuando hay imán: la copia cae en una celda limpia.
-    const result = duplicateEntityInScene(scene, selected.id, snap > 0 ? snap : CLONE_OFFSET);
-    if (!result) return;
-    onChange(result.scene);
-    onSelect(result.cloneId);
-  }, [selected, scene, snap, onChange, onSelect]);
-
-  const deleteSelected = useCallback(() => {
-    if (!selected || isPlayerEntity(selected)) return;
-    // Borra la rama completa: un árbol a medias dejaría hijos sueltos. Se puede
-    // deshacer con Ctrl+Z.
-    onChange(removeEntityWithChildren(scene, selected.id));
-    onSelect(null);
-  }, [selected, scene, onChange, onSelect]);
-
-  const bringToFront = useCallback(() => {
-    if (!selected) return;
-    const maxZ = scene.entities.reduce((m, e) => Math.max(m, e.z ?? 0), 0);
-    onChange({
-      ...scene,
-      entities: scene.entities.map(e => e.id === selected.id ? { ...e, z: maxZ + 1 } : e),
-    });
-  }, [selected, scene, onChange]);
-
-  const sendToBack = useCallback(() => {
-    if (!selected) return;
-    const minZ = scene.entities.reduce((m, e) => Math.min(m, e.z ?? 0), 0);
-    onChange({
-      ...scene,
-      entities: scene.entities.map(e => e.id === selected.id ? { ...e, z: minZ - 1 } : e),
-    });
-  }, [selected, scene, onChange]);
-
-  const flipH = useCallback(() => {
-    if (!selected) return;
-    onChange({
-      ...scene,
-      entities: scene.entities.map(e => e.id === selected.id ? { ...e, flipX: !e.flipX } : e),
-    });
-  }, [selected, scene, onChange]);
-
-  const flipV = useCallback(() => {
-    if (!selected) return;
-    onChange({
-      ...scene,
-      entities: scene.entities.map(e => e.id === selected.id ? { ...e, flipY: !(e as Entity & { flipY?: boolean }).flipY } as Entity : e),
-    });
-  }, [selected, scene, onChange]);
-
-  // ---------- Keyboard ----------
+  // Keyboard shortcuts (Delete / Duplicate)
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
       const tgt = ev.target as HTMLElement | null;
       if (tgt && (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA" || tgt.isContentEditable)) return;
-      const mod = ev.ctrlKey || ev.metaKey;
-      if (mod && ev.key.toLowerCase() === "z" && !ev.shiftKey) { ev.preventDefault(); undo(); return; }
-      if (mod && (ev.key.toLowerCase() === "y" || (ev.key.toLowerCase() === "z" && ev.shiftKey))) { ev.preventDefault(); redo(); return; }
-      if (mod && ev.key.toLowerCase() === "d") { ev.preventDefault(); duplicateSelected(); return; }
-      if (ev.key === "Delete" || ev.key === "Backspace") { if (selected) { ev.preventDefault(); deleteSelected(); } return; }
-      if (ev.key === "]") { ev.preventDefault(); bringToFront(); return; }
-      if (ev.key === "[") { ev.preventDefault(); sendToBack(); return; }
-      if (ev.key.toLowerCase() === "h") { ev.preventDefault(); flipH(); return; }
-      if (ev.key.toLowerCase() === "v") { ev.preventDefault(); flipV(); return; }
+      const sel = scene.entities.find((e) => e.id === selectedId);
+      if (!sel) return;
+      if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "d") {
+        ev.preventDefault();
+        const result = duplicateEntityInScene(scene, sel.id);
+        if (result) {
+          onChange(result.scene);
+          onSelect(result.cloneId);
+        }
+        return;
+      }
+      if (ev.key === "Delete" || ev.key === "Backspace") {
+        if (!isPlayerEntity(sel) && !isMainGoalEntity(sel)) {
+          ev.preventDefault();
+          onChange(removeEntityWithChildren(scene, sel.id));
+          onSelect(null);
+        }
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [undo, redo, duplicateSelected, deleteSelected, bringToFront, sendToBack, flipH, flipV, selected]);
+  }, [scene, selectedId, onChange, onSelect]);
 
-  // Pointer tracking
   const pointers = useRef<Map<number, { x: number; y: number }>>(new Map());
   const gesture = useRef<{
-    mode: "idle" | "pan" | "move" | "resize" | "place" | "pinch" | "hb-move" | "hb-resize";
-    startSX?: number; startSY?: number;
-    entStartX?: number; entStartY?: number; entStartW?: number; entStartH?: number;
-    hbStartX?: number; hbStartY?: number; hbStartW?: number; hbStartH?: number;
+    mode: "idle" | "pan" | "move" | "resize" | "pinch" | "hb-move" | "hb-resize";
+    startSX?: number;
+    startSY?: number;
+    entStartX?: number;
+    entStartY?: number;
+    entStartW?: number;
+    entStartH?: number;
+    hbStartX?: number;
+    hbStartY?: number;
+    hbStartW?: number;
+    hbStartH?: number;
     entId?: string;
     handle?: HandleId;
     panStart?: { x: number; y: number };
@@ -189,35 +150,17 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
   }>({ mode: "idle" });
 
   useEffect(() => {
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-    const fit = () => {
-      const w = wrap.clientWidth, h = wrap.clientHeight;
-      if (w < 40 || h < 40) return;
-      const s = Math.min(w / scene.width, h / scene.height) * 0.95;
-      setScale(s);
-      setPan({
-        x: (w - scene.width * s) / 2,
-        y: (h - scene.height * s) / 2,
-      });
-    };
-    fit();
-    const ro = new ResizeObserver(fit);
-    ro.observe(wrap);
-    window.addEventListener("resize", fit);
-    return () => { ro.disconnect(); window.removeEventListener("resize", fit); };
-  }, [scene.width, scene.height]);
-
-
-  useEffect(() => {
     const canvas = canvasRef.current!;
-    const ctx = canvas.getContext("2d")!;
+    const ctx = (canvas.getContext("2d", { desynchronized: true }) ?? canvas.getContext("2d"))!;
     let mounted = true;
 
-    const hasAnimated = scene.entities.some(e => (e.animations ?? []).some(c => c.frames.length > 1 && c.fps > 0));
-    const sortedEnts = sortedForRender(scene).filter(e => !isOnHiddenLayer(scene, e));
+    const hasAnimated = scene.entities.some((e) =>
+      (e.animations ?? []).some((c) => c.frames.length > 1 && c.fps > 0),
+    );
+    const sortedEnts = sortedForRender(scene).filter((e) => !isOnHiddenLayer(scene, e));
+
     const setupSize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const next = canvasPixelSize(canvas.clientWidth, canvas.clientHeight, dpr);
       if (needsCanvasResize(canvas, next)) {
         canvas.width = next.width;
@@ -225,7 +168,7 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
+      ctx.imageSmoothingQuality = "medium";
     };
 
     const render = (t: number) => {
@@ -233,8 +176,7 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
       setupSize();
       const W = canvas.clientWidth;
       const H = canvas.clientHeight;
-      // Limpia en píxeles reales: con un tamaño CSS fraccionario, limpiar W×H
-      // (CSS por el DPR) dejaba sin borrar la última columna o fila del bitmap.
+
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -244,11 +186,13 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
       ctx.translate(pan.x, pan.y);
       ctx.scale(scale, scale);
 
+      // Level box background
       const grd = ctx.createLinearGradient(0, 0, 0, scene.height);
       grd.addColorStop(0, scene.bg || "#0b1e3f");
-      grd.addColorStop(1, "#030712");
+      grd.addColorStop(1, "#020617");
       ctx.fillStyle = grd;
       ctx.fillRect(0, 0, scene.width, scene.height);
+
       if (scene.bgImage) {
         const bgImg = getRenderableImage(scene.bgImage);
         if (bgImg) {
@@ -261,26 +205,38 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
         }
       }
 
-      // grid (uses current snap)
-      const gridStep = snap > 0 ? Math.max(snap, 8) : 40;
-      ctx.strokeStyle = "rgba(56,189,248,0.16)";
+      // Grid inside level box
+      ctx.strokeStyle = "rgba(56,189,248,0.10)";
       ctx.lineWidth = 1 / scale;
       ctx.beginPath();
-      for (let x = 0; x <= scene.width; x += gridStep) { ctx.moveTo(x, 0); ctx.lineTo(x, scene.height); }
-      for (let y = 0; y <= scene.height; y += gridStep) { ctx.moveTo(0, y); ctx.lineTo(scene.width, y); }
+      for (let x = 0; x <= scene.width; x += 40) {
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, scene.height);
+      }
+      for (let y = 0; y <= scene.height; y += 40) {
+        ctx.moveTo(0, y);
+        ctx.lineTo(scene.width, y);
+      }
       ctx.stroke();
-      ctx.strokeStyle = "rgba(125,211,252,0.6)";
+
+      // Level box border
+      ctx.strokeStyle = "rgba(56,189,248,0.55)";
       ctx.lineWidth = 2 / scale;
       ctx.strokeRect(0, 0, scene.width, scene.height);
 
+      const cullMinX = -pan.x / scale - 96;
+      const cullMaxX = (W - pan.x) / scale + 96;
+      const cullMinY = -pan.y / scale - 96;
+      const cullMaxY = (H - pan.y) / scale + 96;
+
       const tSec = t / 1000;
       for (const e of sortedEnts) {
+        if (e.x + e.w < cullMinX || e.x > cullMaxX || e.y + e.h < cullMinY || e.y > cullMaxY) continue;
         ctx.save();
         const la = layerOpacityFor(scene, e);
         const ea = (e.opacity ?? 1) * la;
         if (ea !== 1) ctx.globalAlpha = ea;
         const flipX = (e.facing === -1) !== !!e.flipX;
-        const flipY = !!(e as Entity & { flipY?: boolean }).flipY;
         const rot = ((e.rotation ?? 0) * Math.PI) / 180;
         if (rot) {
           const cx = e.x + e.w / 2;
@@ -289,12 +245,15 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
           ctx.rotate(rot);
           ctx.translate(-cx, -cy);
         }
-        ctx.translate(e.x + (flipX ? e.w : 0), e.y + (flipY ? e.h : 0));
-        ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
+        ctx.translate(e.x + (flipX ? e.w : 0), e.y);
+        ctx.scale(flipX ? -1 : 1, 1);
         const animImg = currentFrameRenderable(e, tSec, "idle");
         const drawFit = (img: HTMLImageElement | ImageBitmap) => {
           const fit = e.textureFit ?? "stretch";
-          if (fit === "stretch") { ctx.drawImage(img, 0, 0, e.w, e.h); return; }
+          if (fit === "stretch") {
+            ctx.drawImage(img, 0, 0, e.w, e.h);
+            return;
+          }
           const sa = img.width / img.height;
           const da = e.w / e.h;
           const cover = fit === "cover" ? sa > da : sa < da;
@@ -316,16 +275,19 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
             }
           }
         } else {
-          // Match GameRuntime fallback shapes so editor preview == PLAY preview
           ctx.save();
+          if (flipX) {
+            ctx.translate(e.w, 0);
+            ctx.scale(-1, 1);
+          }
           ctx.shadowColor = e.color;
-          ctx.shadowBlur = e.kind === "coin" ? 10 : e.kind === "goal" ? 12 : 4;
+          ctx.shadowBlur = e.kind === "coin" ? 10 : e.kind === "goal" && e.goal ? 12 : 4;
           ctx.fillStyle = e.color;
           if (e.kind === "coin") {
             ctx.beginPath();
             ctx.arc(e.w / 2, e.h / 2, e.w / 2, 0, Math.PI * 2);
             ctx.fill();
-          } else if (e.kind === "goal") {
+          } else if (e.kind === "goal" && e.goal) {
             ctx.fillStyle = "rgba(125,211,252,0.3)";
             ctx.fillRect(0, 0, e.w, e.h);
             ctx.fillStyle = e.color;
@@ -348,8 +310,7 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
             ctx.fill();
             if (e.kind === "player") {
               ctx.shadowBlur = 0;
-              // El contexto ya está espejado según `facing`, así que aquí va 1.
-              drawChibiCharacter(ctx, 0, 0, e.w, e.h, e.color, 1);
+              drawChibiCharacter(ctx, 0, 0, e.w, e.h, e.color, flipX ? -1 : 1);
             }
           }
           ctx.restore();
@@ -357,6 +318,7 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
         ctx.restore();
       }
 
+      // Hitboxes
       for (const e of scene.entities) {
         const hb = e.hitbox;
         if (!hb) continue;
@@ -370,7 +332,7 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
         ctx.restore();
       }
 
-      const sel = scene.entities.find(e => e.id === selectedId);
+      const sel = scene.entities.find((e) => e.id === selectedId);
       if (sel) {
         ctx.restore();
         const sx = pan.x + sel.x * scale;
@@ -378,11 +340,10 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
         const sw = sel.w * scale;
         const sh = sel.h * scale;
 
-        // Vínculos de jerarquía: con el objeto seleccionado se ven sus enlaces
-        // (hacia el padre y hacia cada hijo) para no perderse en el árbol.
+        // Hierarchy links
         const linked = [
           ...(sel.parentId ? [sel.parentId] : []),
-          ...childrenOf(scene, sel.id).map(c => c.id),
+          ...childrenOf(scene, sel.id).map((c) => c.id),
         ];
         if (linked.length) {
           const selCx = pan.x + (sel.x + sel.w / 2) * scale;
@@ -393,7 +354,7 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
           ctx.setLineDash([5, 4]);
           ctx.beginPath();
           for (const id of linked) {
-            const other = scene.entities.find(e => e.id === id);
+            const other = scene.entities.find((e) => e.id === id);
             if (!other) continue;
             const ox = pan.x + (other.x + other.w / 2) * scale;
             const oy = pan.y + (other.y + other.h / 2) * scale;
@@ -402,9 +363,8 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
           }
           ctx.stroke();
           ctx.setLineDash([]);
-          // Marca en el extremo de cada hijo enlazado.
           for (const id of linked) {
-            const other = scene.entities.find(e => e.id === id);
+            const other = scene.entities.find((e) => e.id === id);
             if (!other) continue;
             const ox = pan.x + (other.x + other.w / 2) * scale;
             const oy = pan.y + (other.y + other.h / 2) * scale;
@@ -414,24 +374,10 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
           ctx.restore();
         }
 
-        ctx.lineWidth = 1.25;
-        ctx.strokeStyle = "#7dd3fc";
+        // Selection bounding box
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = "#38bdf8";
         ctx.strokeRect(sx + 0.5, sy + 0.5, sw - 1, sh - 1);
-
-        const label = sel.parentId
-          ? `hijo · ${Math.round(sel.w)} × ${Math.round(sel.h)}`
-          : `${Math.round(sel.w)} × ${Math.round(sel.h)}`;
-        ctx.font = "600 11px ui-monospace, SFMono-Regular, Menlo, monospace";
-        const tw = ctx.measureText(label).width + 10;
-        const lx = sx + sw / 2 - tw / 2;
-        const ly = sy - 22;
-        ctx.fillStyle = "rgba(2,6,23,0.85)";
-        ctx.strokeStyle = "rgba(125,211,252,0.7)";
-        ctx.lineWidth = 1;
-        roundRectPath(ctx, lx, ly, tw, 18, 4);
-        ctx.fill(); ctx.stroke();
-        ctx.fillStyle = "#7dd3fc";
-        ctx.fillText(label, lx + 5, ly + 13);
 
         for (const h of HANDLES) {
           const wp = handlePos(sel, h);
@@ -444,18 +390,15 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
           ctx.strokeRect(hx + 0.5, hy + 0.5, HANDLE_PX - 1, HANDLE_PX - 1);
         }
 
-        // Hitbox handles (when selected entity has a hitbox)
         if (sel.hitbox) {
           const hb = sel.hitbox;
           const hbX = pan.x + (sel.x + hb.x) * scale;
           const hbY = pan.y + (sel.y + hb.y) * scale;
           const hbW = hb.w * scale;
           const hbH = hb.h * scale;
-          // Glow fill to indicate draggable body
           ctx.fillStyle = "rgba(244,63,94,0.10)";
           ctx.fillRect(hbX, hbY, hbW, hbH);
-          // Corner handles (smaller, pink)
-          const HB_PX = 12;
+          const HB_PX = 10;
           const corners: [HandleId, number, number][] = [
             ["nw", hbX, hbY],
             ["ne", hbX + hbW, hbY],
@@ -477,8 +420,11 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
       if (hasAnimated) animRef.current = requestAnimationFrame(render);
     };
     animRef.current = requestAnimationFrame(render);
-    return () => { mounted = false; cancelAnimationFrame(animRef.current); };
-  }, [scene, pan, scale, selectedId, snap]);
+    return () => {
+      mounted = false;
+      cancelAnimationFrame(animRef.current);
+    };
+  }, [scene, pan, scale, selectedId]);
 
   const screenToWorld = (sx: number, sy: number) => ({
     x: (sx - pan.x) / scale,
@@ -490,13 +436,14 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
       const e = scene.entities[i];
       if (e.locked) continue;
       if (e.visible === false) continue;
+      if (isOnHiddenLayer(scene, e)) continue;
       if (wx >= e.x && wx <= e.x + e.w && wy >= e.y && wy <= e.y + e.h) return e;
     }
     return null;
   };
 
   const hitHandle = (sx: number, sy: number): HandleId | null => {
-    const sel = scene.entities.find(e => e.id === selectedId);
+    const sel = scene.entities.find((e) => e.id === selectedId);
     if (!sel) return null;
     for (const h of HANDLES) {
       const wp = handlePos(sel, h);
@@ -508,7 +455,7 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
   };
 
   const hitHbHandle = (sx: number, sy: number): "nw" | "ne" | "sw" | "se" | null => {
-    const sel = scene.entities.find(e => e.id === selectedId);
+    const sel = scene.entities.find((e) => e.id === selectedId);
     if (!sel || !sel.hitbox) return null;
     const hb = sel.hitbox;
     const hbX = pan.x + (sel.x + hb.x) * scale;
@@ -529,7 +476,7 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
   };
 
   const hitHbBody = (sx: number, sy: number) => {
-    const sel = scene.entities.find(e => e.id === selectedId);
+    const sel = scene.entities.find((e) => e.id === selectedId);
     if (!sel || !sel.hitbox) return false;
     const hb = sel.hitbox;
     const hbX = pan.x + (sel.x + hb.x) * scale;
@@ -539,8 +486,12 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
     return sx >= hbX && sx <= hbX + hbW && sy >= hbY && sy <= hbY + hbH;
   };
 
-  const getLocal = (ev: React.PointerEvent) => {
-    const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+  const cachedRectRef = useRef<DOMRect | null>(null);
+  const getLocal = (ev: React.PointerEvent, refreshRect = false) => {
+    if (refreshRect || !cachedRectRef.current) {
+      cachedRectRef.current = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+    }
+    const rect = cachedRectRef.current;
     return { sx: ev.clientX - rect.left, sy: ev.clientY - rect.top };
   };
 
@@ -560,59 +511,76 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
     };
   };
 
-  const snapVal = (v: number) => snap > 0 ? Math.round(v / snap) * snap : Math.round(v);
-
   const onPointerDown = (ev: React.PointerEvent) => {
     (ev.target as Element).setPointerCapture(ev.pointerId);
-    const { sx, sy } = getLocal(ev);
+    const { sx, sy } = getLocal(ev, true);
     pointers.current.set(ev.pointerId, { x: sx, y: sy });
 
-    if (pointers.current.size >= 2) { beginPinch(); return; }
+    if (pointers.current.size >= 2) {
+      beginPinch();
+      return;
+    }
 
     const w = screenToWorld(sx, sy);
 
     const handle = hitHandle(sx, sy);
     if (handle && selectedId) {
-      const ent = scene.entities.find(e => e.id === selectedId)!;
+      const ent = scene.entities.find((e) => e.id === selectedId)!;
       gesture.current = {
-        mode: "resize", handle, entId: ent.id,
-        entStartX: ent.x, entStartY: ent.y, entStartW: ent.w, entStartH: ent.h,
-        startSX: sx, startSY: sy,
+        mode: "resize",
+        handle,
+        entId: ent.id,
+        entStartX: ent.x,
+        entStartY: ent.y,
+        entStartW: ent.w,
+        entStartH: ent.h,
+        startSX: sx,
+        startSY: sy,
       };
       return;
     }
 
-    // Hitbox interactions (only when select tool active)
     if (tool === "select" && selectedId) {
       const hbHandle = hitHbHandle(sx, sy);
-      const sel = scene.entities.find(e => e.id === selectedId);
+      const sel = scene.entities.find((e) => e.id === selectedId);
       if (hbHandle && sel?.hitbox) {
         gesture.current = {
-          mode: "hb-resize", handle: hbHandle, entId: sel.id,
-          hbStartX: sel.hitbox.x, hbStartY: sel.hitbox.y,
-          hbStartW: sel.hitbox.w, hbStartH: sel.hitbox.h,
-          startSX: sx, startSY: sy,
+          mode: "hb-resize",
+          handle: hbHandle,
+          entId: sel.id,
+          hbStartX: sel.hitbox.x,
+          hbStartY: sel.hitbox.y,
+          hbStartW: sel.hitbox.w,
+          hbStartH: sel.hitbox.h,
+          startSX: sx,
+          startSY: sy,
         };
         return;
       }
       if (hitHbBody(sx, sy) && sel?.hitbox) {
         gesture.current = {
-          mode: "hb-move", entId: sel.id,
-          hbStartX: sel.hitbox.x, hbStartY: sel.hitbox.y,
-          startSX: sx, startSY: sy,
+          mode: "hb-move",
+          entId: sel.id,
+          hbStartX: sel.hitbox.x,
+          hbStartY: sel.hitbox.y,
+          startSX: sx,
+          startSY: sy,
         };
         return;
       }
     }
-
 
     if (tool === "select") {
       const hit = hitTest(w.x, w.y);
       if (hit) {
         onSelect(hit.id);
         gesture.current = {
-          mode: "move", entId: hit.id,
-          entStartX: hit.x, entStartY: hit.y, startSX: sx, startSY: sy,
+          mode: "move",
+          entId: hit.id,
+          entStartX: hit.x,
+          entStartY: hit.y,
+          startSX: sx,
+          startSY: sy,
         };
       } else {
         onSelect(null);
@@ -620,32 +588,29 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
       }
     } else if (tool === "erase") {
       const hit = hitTest(w.x, w.y);
-      if (hit && !isPlayerEntity(hit)) {
-        // La goma también borra la rama del objeto tocado.
+      if (hit && !isPlayerEntity(hit) && !isMainGoalEntity(hit)) {
         onChange(removeEntityWithChildren(scene, hit.id));
       }
-      gesture.current = { mode: "idle" };
     } else {
       const preset = KIND_PRESETS[tool];
       const ent: Entity = {
         ...preset,
         id: uid(),
-        x: snapVal(w.x - preset.w / 2),
-        y: snapVal(w.y - preset.h / 2),
+        x: Math.round((w.x - preset.w / 2) / 20) * 20,
+        y: Math.round((w.y - preset.h / 2) / 20) * 20,
       };
       let entities = scene.entities;
-      // Solo puede haber un personaje jugable: el nuevo sustituye al anterior,
-      // pero los dobles (tipo player sin mando) se quedan donde estén.
-      if (tool === "player") entities = entities.filter(e => !isPlayerEntity(e));
+      if (tool === "player" && ent.controllable) {
+        entities = entities.filter((e) => !isPlayerEntity(e));
+      }
       onChange({ ...scene, entities: [...entities, ent] });
       onSelect(ent.id);
-      gesture.current = { mode: "idle" };
     }
   };
 
   const onPointerMove = (ev: React.PointerEvent) => {
-    const { sx, sy } = getLocal(ev);
     if (!pointers.current.has(ev.pointerId)) return;
+    const { sx, sy } = getLocal(ev);
     pointers.current.set(ev.pointerId, { x: sx, y: sy });
 
     const g = gesture.current;
@@ -678,46 +643,67 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
       const dy = (sy - (g.startSY || 0)) / scale;
       const target = entityById(scene, g.entId);
       if (!target) return;
-      // Mover el padre arrastra a sus hijos; mover un hijo solo lo mueve a él y
-      // lo mantiene dentro del padre (ver setEntityPosition en core.ts).
-      onChange(setEntityPosition(
-        scene,
-        g.entId,
-        snapVal((g.entStartX || 0) + dx),
-        snapVal((g.entStartY || 0) + dy),
-      ));
+      onChange(
+        setEntityPosition(
+          scene,
+          g.entId,
+          Math.round(((g.entStartX || 0) + dx) / 10) * 10,
+          Math.round(((g.entStartY || 0) + dy) / 10) * 10,
+        ),
+      );
     } else if (g.mode === "resize" && g.entId && g.handle) {
       const w = screenToWorld(sx, sy);
-      const entities = scene.entities.map(e => {
+      const entities = scene.entities.map((e) => {
         if (e.id !== g.entId) return e;
-        const base: Entity = { ...e, x: g.entStartX!, y: g.entStartY!, w: g.entStartW!, h: g.entStartH! };
-        return resizeEntity(base, g.handle!, w.x, w.y, snap);
+        const base: Entity = {
+          ...e,
+          x: g.entStartX!,
+          y: g.entStartY!,
+          w: g.entStartW!,
+          h: g.entStartH!,
+        };
+        return resizeEntity(base, g.handle!, w.x, w.y);
       });
       onChange({ ...scene, entities });
     } else if (g.mode === "hb-move" && g.entId) {
       const dx = (sx - (g.startSX || 0)) / scale;
       const dy = (sy - (g.startSY || 0)) / scale;
-      const entities = scene.entities.map(e => {
+      const entities = scene.entities.map((e) => {
         if (e.id !== g.entId || !e.hitbox) return e;
-        return { ...e, hitbox: { ...e.hitbox, x: Math.round((g.hbStartX || 0) + dx), y: Math.round((g.hbStartY || 0) + dy) } };
+        return {
+          ...e,
+          hitbox: {
+            ...e.hitbox,
+            x: Math.round((g.hbStartX || 0) + dx),
+            y: Math.round((g.hbStartY || 0) + dy),
+          },
+        };
       });
       onChange({ ...scene, entities });
     } else if (g.mode === "hb-resize" && g.entId && g.handle) {
       const dx = (sx - (g.startSX || 0)) / scale;
       const dy = (sy - (g.startSY || 0)) / scale;
-      const entities = scene.entities.map(e => {
+      const entities = scene.entities.map((e) => {
         if (e.id !== g.entId || !e.hitbox) return e;
         let x = g.hbStartX || 0;
         let y = g.hbStartY || 0;
-        let w = g.hbStartW || 0;
-        let h = g.hbStartH || 0;
-        if (g.handle!.includes("w")) { x = x + dx; w = w - dx; }
-        if (g.handle!.includes("e")) { w = w + dx; }
-        if (g.handle!.includes("n")) { y = y + dy; h = h - dy; }
-        if (g.handle!.includes("s")) { h = h + dy; }
-        if (w < 4) { x = x + w - 4; w = 4; }
-        if (h < 4) { y = y + h - 4; h = 4; }
-        return { ...e, hitbox: { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) } };
+        let wRect = g.hbStartW || 0;
+        let hRect = g.hbStartH || 0;
+        if (g.handle!.includes("w")) { x = x + dx; wRect = wRect - dx; }
+        if (g.handle!.includes("e")) { wRect = wRect + dx; }
+        if (g.handle!.includes("n")) { y = y + dy; hRect = hRect - dy; }
+        if (g.handle!.includes("s")) { hRect = hRect + dy; }
+        if (wRect < 4) { x = x + wRect - 4; wRect = 4; }
+        if (hRect < 4) { y = y + hRect - 4; hRect = 4; }
+        return {
+          ...e,
+          hitbox: {
+            x: Math.round(x),
+            y: Math.round(y),
+            w: Math.round(wRect),
+            h: Math.round(hRect),
+          },
+        };
       });
       onChange({ ...scene, entities });
     }
@@ -733,8 +719,24 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
     }
   };
 
+  const onWheel = (ev: React.WheelEvent) => {
+    ev.preventDefault();
+    const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+    const sx = ev.clientX - rect.left;
+    const sy = ev.clientY - rect.top;
+    const factor = ev.deltaY < 0 ? 1.12 : 0.89;
+    const nextScale = Math.max(0.15, Math.min(3, scale * factor));
+    const wx = (sx - pan.x) / scale;
+    const wy = (sy - pan.y) / scale;
+    setScale(nextScale);
+    setPan({
+      x: sx - wx * nextScale,
+      y: sy - wy * nextScale,
+    });
+  };
+
   return (
-    <div ref={wrapRef} className="relative h-full w-full overflow-hidden cyber-grid">
+    <div ref={wrapRef} className="relative h-full w-full overflow-hidden cyber-grid select-none">
       <canvas
         ref={canvasRef}
         className="absolute inset-0 h-full w-full touch-none"
@@ -742,20 +744,8 @@ export function SceneEditor({ scene, tool, selectedId, onSelect, onChange }: Pro
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onWheel={onWheel}
       />
-      <div className="absolute top-2 left-2 editor-fab-group rounded-full px-2.5 py-1 text-[10px] font-mono font-medium text-primary">
-        {scene.width}×{scene.height} · {Math.round(scale * 100)}%
-      </div>
     </div>
   );
-}
-
-function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
 }

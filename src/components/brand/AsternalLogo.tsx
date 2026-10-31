@@ -124,38 +124,74 @@ export function AsternalMark({ size = 40, className = "", title = "Asternal" }: 
         </clipPath>
       </defs>
 
-      {/* Cuadro con el degradado de marca */}
-      <rect x="0" y="0" width="64" height="64" rx="17" fill={`url(#${bgId})`} />
+      {/* Papel y cuadro bocetado con estilo a lápiz / bolígrafo drawably */}
+      <rect x="2" y="2" width="60" height="60" rx="14" fill="#e3e3e1" />
 
-      {/* Luces y sombras suaves, recortadas al cuadro redondeado */}
+      {/* Luces, sombreado cruzado a lápiz y trazos bocetados */}
       <g clipPath={`url(#${clipId})`}>
         <path d="M0 0 H30 L0 44 Z" fill={`url(#${glossId})`} />
-        <circle cx="53" cy="55" r="20" fill="#0b1c3a" opacity="0.10" />
+        {/* Trama a lápiz (scribble hatching) */}
+        <path
+          d="M 8 16 L 20 6 M 6 28 L 32 6 M 6 42 L 46 6 M 8 54 L 56 10 M 18 58 L 58 22 M 32 58 L 58 34 M 46 58 L 58 48"
+          stroke="#2724d1"
+          strokeWidth="1.2"
+          strokeOpacity="0.16"
+          strokeLinecap="round"
+        />
         <ellipse cx="32" cy="31" rx="20" ry="21" fill={`url(#${glowId})`} />
 
-        {/* Sombra de la letra: se ve tallada sobre el degradado */}
-        <path d={A_OUTLINE} transform="translate(1.2 1.6)" fill="#0b1c3a" opacity="0.30" fillRule="evenodd" />
-
-        {/* La letra «A», con borde claro para que no pierda filo */}
+        {/* Sombra de grafito desplazada de la letra */}
         <path
           d={A_OUTLINE}
-          fill={`url(#${letterId})`}
+          transform="translate(1.8 2.0)"
+          fill="#18181b"
+          opacity="0.22"
           fillRule="evenodd"
-          stroke="#f2f9ff"
-          strokeWidth="0.6"
-          strokeOpacity="0.75"
+        />
+
+        {/* La letra «A», con relleno de tinta azul bolígrafo y doble trazo */}
+        <path
+          d={A_OUTLINE}
+          fill="#2724d1"
+          fillRule="evenodd"
+          stroke="#18181b"
+          strokeWidth="1.5"
           strokeLinejoin="round"
         />
-        {/* Canto iluminado del trazo derecho */}
+        <path
+          d={A_OUTLINE}
+          transform="translate(-0.6 0.5) rotate(-0.8 32 32)"
+          fill="none"
+          stroke="#2724d1"
+          strokeWidth="1"
+          strokeOpacity="0.7"
+          strokeLinejoin="round"
+        />
+        {/* Canto bocetado del trazo derecho */}
         <path d="M32 16 L44.8 50.4" fill="none" stroke={`url(#${rimId})`} strokeWidth="1.2" strokeLinecap="round" />
 
-        {/* Destello */}
-        <circle cx="45.5" cy="15.5" r="7.5" fill="#ffffff" opacity="0.12" />
-        <path d={SPARK} fill="#ffffff" opacity="0.95" />
+        {/* Destello dibujado a mano */}
+        <path d={SPARK} fill="#b45309" stroke="#18181b" strokeWidth="1" strokeLinejoin="round" />
       </g>
 
-      {/* Brillo del borde superior */}
-      <rect x="1" y="1" width="62" height="62" rx="16" fill="none" stroke={`url(#${edgesId})`} strokeWidth="2" />
+      {/* Doble borde dibujado a mano alrededor del cuadro */}
+      <path
+        d="M 15 3.2 C 28 2.1, 41 2.5, 50 3.4 C 57.5 4.1, 60.4 7.8, 60.8 15.2 C 61.3 27.5, 60.7 40.2, 60.4 49.5 C 60.0 56.8, 56.4 60.2, 49.2 60.7 C 37.5 61.4, 24.8 60.9, 14.5 60.5 C 7.2 60.1, 3.6 56.4, 3.2 48.8 C 2.7 36.8, 3.1 24.5, 3.5 14.8 C 3.9 7.5, 7.6 3.9, 15 3.2 Z"
+        fill="none"
+        stroke="#18181b"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M 16 4.4 C 29 3.6, 40 3.8, 49 4.5 C 56.2 5.2, 59.3 8.6, 59.6 16.0 C 60.1 28.1, 59.8 39.5, 59.3 48.6 C 58.9 55.6, 55.4 59.1, 48.1 59.5 C 36.8 60.1, 25.4 59.8, 15.2 59.3 C 8.1 58.9, 4.7 55.2, 4.3 47.9 C 3.8 36.1, 4.2 25.2, 4.7 15.6 C 5.1 8.4, 8.8 5.0, 16 4.4 Z"
+        fill="none"
+        stroke="#2724d1"
+        strokeWidth="1.2"
+        strokeOpacity="0.65"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -166,19 +202,6 @@ interface LetterAProps {
   className?: string;
 }
 
-/**
- * La «A» del logotipo, suelta y sin cuadro.
- *
- * Es el mismo trazo que lleva el icono, recortado a su contorno exacto y con el
- * vértice arriba y la línea base abajo: así se apoya sobre la línea base del
- * nombre y puede hacer de primera letra, del mismo alto que una mayúscula.
- *
- * Va pintada con el mismo degradado que «sternal» —los dos azules de marca del
- * tema, de arriba abajo— y lleva un halo azul desenfocado por detrás que le da
- * volumen (el mismo truco de luz del cuadro, pero suelto, sin caja). El halo va
- * en unidades del propio glifo, así que se escala con la letra y se ve igual de
- * fino a 16 px que a 56 px.
- */
 export function AsternalLetterA({ height = 40, className = "" }: LetterAProps) {
   const rawId = useId().replace(/[^a-zA-Z0-9]/g, "");
   const fillId = `ast-word-a-${rawId}`;
@@ -211,8 +234,15 @@ export function AsternalLetterA({ height = 40, className = "" }: LetterAProps) {
 
       {/* Luz azul por detrás de la letra: le da profundidad sobre el fondo. */}
       <path d={A_GLYPH} style={{ fill: BRAND_BLUE_SOFT }} opacity="0.45" filter={`url(#${glowId})`} fillRule="evenodd" />
-      {/* La letra, con el degradado de marca. */}
-      <path d={A_GLYPH} fill={`url(#${fillId})`} fillRule="evenodd" />
+      {/* La letra, con el degradado de marca y contorno de lápiz grafito. */}
+      <path
+        d={A_GLYPH}
+        fill={`url(#${fillId})`}
+        stroke="#18181b"
+        strokeWidth="1.1"
+        strokeLinejoin="round"
+        fillRule="evenodd"
+      />
     </svg>
   );
 }

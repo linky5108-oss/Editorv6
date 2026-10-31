@@ -64,14 +64,16 @@ async function getCommunitySettings(): Promise<CommunitySettings> {
   return parseCommunitySettings(rows[0]?.content);
 }
 
+import { parseAiJson } from "../src/lib/ai/gemini-provider";
+
 function stripJsonFence(value: string) {
   return value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
 }
 
 export function parseModerationDecision(value: string): ModerationDecision | null {
   try {
-    const parsed = JSON.parse(stripJsonFence(value)) as Record<string, unknown>;
-    if (typeof parsed.allowed !== "boolean") return null;
+    const parsed = parseAiJson<Record<string, unknown>>(value);
+    if (!parsed || typeof parsed !== "object" || typeof parsed.allowed !== "boolean") return null;
     const reason = typeof parsed.reason === "string" ? parsed.reason.trim().slice(0, 420) : "";
     const summary = typeof parsed.summary === "string" ? parsed.summary.trim().slice(0, 240) : "";
     return { allowed: parsed.allowed, reason: reason || DEFAULT_BLOCK_REASON, summary };
@@ -240,6 +242,14 @@ async function askOrion(messages: LLMMessage[], options?: { temperature?: number
 }
 
 function extractJsonObjectFromText(raw: string): Record<string, unknown> {
+  try {
+    const parsed = parseAiJson< unknown >(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    /* intenta candidatos manuales */
+  }
   const trimmed = stripJsonFence(raw);
   const candidates: string[] = [trimmed];
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(raw);
@@ -328,7 +338,7 @@ export async function rankCommunityFeed(input: unknown): Promise<{ orderedIds: s
     { role: "user", content: JSON.stringify({ posts: candidates }) },
   ], { responseMimeType: "application/json" });
   let parsedIds: unknown = [];
-  try { parsedIds = JSON.parse(stripJsonFence(content)).orderedIds; } catch { /* conservamos orden cronológico */ }
+  try { parsedIds = parseAiJson<{ orderedIds?: unknown }>(content).orderedIds; } catch { /* conservamos orden cronológico */ }
   return { orderedIds: mergeRecommendedIds(ids, parsedIds) };
 }
 
@@ -413,4 +423,24 @@ export async function editGameWithOrion(input: unknown): Promise<{ patch: Record
   const parsed = extractJsonObjectFromText(content);
   return { patch: parsed, model };
 }
+
+export async function generateScriptManualWithOrion(input: unknown): Promise<{ text: string; model: string }> {
+  const source = input && typeof input === "object" ? (input as { prompt?: unknown; systemPrompt?: unknown }) : {};
+  const prompt = cleanText(source.prompt, 48_000);
+  const systemPrompt = cleanText(source.systemPrompt, 24_000);
+  if (!prompt.trim()) {
+    throw new Error("Escribe una instrucción para la IA.");
+  }
+  const model = await getOrionModel();
+  const messages: LLMMessage[] = [
+    ...(systemPrompt.trim() ? [{ role: "system" as const, content: systemPrompt }] : []),
+    { role: "user" as const, content: prompt },
+  ];
+  const text = await askOrion(messages, {
+    temperature: 0.2,
+    responseMimeType: "application/json",
+  });
+  return { text, model };
+}
+
 

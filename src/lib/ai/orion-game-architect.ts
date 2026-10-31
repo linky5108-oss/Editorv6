@@ -15,6 +15,7 @@ import {
   syncHtmlToProject,
   syncRuntimeAndTexturesToProject,
 } from "@/lib/engine/html5-game";
+import { getProjectAudioLibrary } from "@/lib/engine/audio-library";
 import { normalizeScripts, type Script } from "@/lib/engine/scripts";
 import { ENGINE_KNOWLEDGE } from "./engine-knowledge";
 import { geminiChat, parseAiJson } from "./gemini-provider";
@@ -167,6 +168,7 @@ export function summarizeProjectForOrionArchitect(project: Project): string {
 
   const customJs = project.customRuntime?.jsCode?.trim() || "";
   const synthKeys = Object.keys(project.customRuntime?.synthSounds ?? {});
+  const audioLibrary = getProjectAudioLibrary(project);
 
   return JSON.stringify(
     {
@@ -191,6 +193,11 @@ export function summarizeProjectForOrionArchitect(project: Project): string {
         name: s.name,
         width: s.width,
         height: s.height,
+      })),
+      audioAssetsRegistered: audioLibrary.map((a) => ({
+        id: a.id,
+        name: a.name,
+        category: a.category,
       })),
       synthSoundsRegistered: synthKeys,
       currentCustomRuntimeJs: customJs.slice(0, 4500),
@@ -312,6 +319,31 @@ export function redistributeSceneEntities(
   return { ...scene, entities: nextEntities };
 }
 
+function repairMangledRuntimeJs(code: string): string {
+  let next = code
+    .replace(/!>\s*>\s*/g, "!== ")
+    .replace(/>\s*>\s*>\s*/g, "=== ")
+    .replace(/!>\s+/g, "!= ")
+    .replace(/<>\s*/g, "<= ")
+    .replace(/\+>\s*/g, "+= ")
+    .replace(/->\s*/g, "-= ")
+    .replace(/\*>\s*/g, "*= ")
+    .replace(/\/>\s*/g, "/= ")
+    .replace(/(\))\s*>\s*>/g, "$1 =>")
+    .replace(/([a-zA-Z_$][\w$]*)\s*>\s*>\s*(\{)/g, "$1 => $2")
+    .replace(/>\s*>\s*/g, ">= ")
+    .replace(/\b(const|let|var)\s+([a-zA-Z_$][\w$]*)\s*>\s+/g, "$1 $2 = ")
+    .replace(
+      /(^|[;\n{)]\s*)([a-zA-Z_$][\w$]*(?:\.[a-zA-Z_$][\w$]*|\[[^\]]+\])*)\s*>\s+/gm,
+      "$1$2 = ",
+    );
+  next = next.replace(
+    /(=\s*)([a-zA-Z_$][\w$]*(?:\.[a-zA-Z_$][\w$]*|\[[^\]]+\])*)\s*>\s+/g,
+    "$1$2 = ",
+  );
+  return next;
+}
+
 function cleanRuntimeJsCode(rawCode: string): string {
   const cleaned = rawCode
     .trim()
@@ -324,17 +356,26 @@ function cleanRuntimeJsCode(rawCode: string): string {
     new Function(cleaned);
     return cleaned;
   } catch {
-    // Si hubiera algún bloque cercado interno, intenta extraerlo
-    const match = /```(?:javascript|js)?\s*([\s\S]*?)```/i.exec(rawCode);
-    if (match?.[1]) {
-      try {
-        new Function(match[1].trim());
-        return match[1].trim();
-      } catch {
-        return "";
+    const repaired = repairMangledRuntimeJs(cleaned);
+    try {
+      new Function(repaired);
+      return repaired;
+    } catch {
+      // Si hubiera algún bloque cercado interno, intenta extraerlo
+      const match = /```(?:javascript|js)?\s*([\s\S]*?)```/i.exec(rawCode);
+      if (match?.[1]) {
+        const inner = match[1].trim();
+        for (const candidate of [inner, repairMangledRuntimeJs(inner)]) {
+          try {
+            new Function(candidate);
+            return candidate;
+          } catch {
+            /* intenta siguiente candidato */
+          }
+        }
       }
+      return "";
     }
-    return "";
   }
 }
 
@@ -386,10 +427,15 @@ export function applyOrionPatchToProject(project: Project, patch: OrionEditPatch
   // Si la IA pidió reemplazar todas las entidades para construir un nivel nuevo
   if (patch.replaceAllEntities && Array.isArray(patch.entitiesToAdd) && patch.entitiesToAdd.length > 0) {
     const existingPlayer = nextScene.entities.find((e) => e.controllable || e.kind === "player");
+    const existingGoal = nextScene.entities.find((e) => e.goal === true);
     const addedHasPlayer = patch.entitiesToAdd.some(
       (e) => (e?.kind ?? e?.type) === "player" || e?.controllable === true,
     );
-    nextScene.entities = addedHasPlayer || !existingPlayer ? [] : [existingPlayer];
+    const addedHasGoal = patch.entitiesToAdd.some((e) => e?.goal === true);
+    nextScene.entities = [
+      ...(!addedHasPlayer && existingPlayer ? [existingPlayer] : []),
+      ...(!addedHasGoal && existingGoal ? [existingGoal] : []),
+    ];
   }
 
   // Eliminación por ID o nombre
@@ -397,6 +443,7 @@ export function applyOrionPatchToProject(project: Project, patch: OrionEditPatch
     const rmSet = new Set(patch.entityIdsToRemove.map((s) => String(s).toLowerCase()));
     nextScene.entities = nextScene.entities.filter((e) => {
       if (e.controllable && nextScene.entities.filter((x) => x.controllable).length <= 1) return true;
+      if (e.goal && nextScene.entities.filter((x) => x.goal).length <= 1) return true;
       const byId = rmSet.has(e.id.toLowerCase());
       const byName = e.name ? rmSet.has(e.name.toLowerCase()) : false;
       return !byId && !byName;
@@ -407,7 +454,7 @@ export function applyOrionPatchToProject(project: Project, patch: OrionEditPatch
   if (Array.isArray(patch.kindsToRemove) && patch.kindsToRemove.length > 0) {
     const rmKinds = new Set(patch.kindsToRemove);
     nextScene.entities = nextScene.entities.filter((e) => {
-      if (e.kind === "player" || e.controllable) return true;
+      if (e.kind === "player" || e.controllable || e.goal) return true;
       return !rmKinds.has(e.kind);
     });
   }
@@ -573,6 +620,50 @@ export function applyOrionPatchToProject(project: Project, patch: OrionEditPatch
 
   if (patch.redistributeLayout) {
     nextScene = redistributeSceneEntities(nextScene, patch.redistributeLayout);
+  }
+
+  // Vincular cualquier bloque playMusic / playSound con los assets reales de la biblioteca de Ajustes
+  const audioLib = getProjectAudioLibrary(project);
+  if (audioLib.length > 0) {
+    const resolveAudioAsset = (ref?: string) => {
+      if (!ref) return null;
+      const clean = ref.trim();
+      if (!clean) return null;
+      const lower = clean.toLowerCase();
+      return (
+        audioLib.find(
+          (a) =>
+            a.id === clean ||
+            a.url === clean ||
+            a.name.trim().toLowerCase() === lower ||
+            lower.includes(a.name.trim().toLowerCase()),
+        ) ?? null
+      );
+    };
+
+    nextScene.entities = nextScene.entities.map((ent) => {
+      if (!ent.scripts || ent.scripts.length === 0) return ent;
+      return {
+        ...ent,
+        scripts: ent.scripts.map((sc) => ({
+          ...sc,
+          blocks: sc.blocks.map((b) => {
+            if (b.kind !== "playMusic" && b.kind !== "playSound") return b;
+            const match =
+              resolveAudioAsset(b.soundUrl) ||
+              resolveAudioAsset(b.soundName) ||
+              resolveAudioAsset(b.text);
+            if (!match) return b;
+            return {
+              ...b,
+              soundUrl: match.url,
+              soundName: match.name,
+              text: match.name,
+            };
+          }),
+        })),
+      };
+    });
   }
 
   nextScene = ensureSceneLayers(nextScene);

@@ -1,7 +1,7 @@
 // Block-based scripting (events + actions) for Asternal Engine
 import type { Entity, EntityKind, RuntimeInput, RuntimeState, Scene, UIElement } from "./core";
 import { intersects, KIND_PRESETS, uid as makeId } from "./core";
-import { playSoundUrl, playRandomCustomSound, vibrate } from "./sfx";
+import { playSoundUrl, playRandomCustomSound, startMusic, stopMusic, vibrate } from "./sfx";
 
 export type EventType =
   | "onStart"
@@ -109,12 +109,45 @@ export type BlockKind =
   | "broadcast"
   | "ifVariable"
   | "repeat"
-  | "setObjectSize";
+  | "setObjectSize"
+  | "playMusic"
+  | "stopMusic"
+  // Scratch 3.0 blocks
+  | "moveSteps"
+  | "turnRight"
+  | "turnLeft"
+  | "pointInDirection"
+  | "gotoTarget"
+  | "glideTo"
+  | "ifOnEdgeBounce"
+  | "sayForSecs"
+  | "say"
+  | "thinkForSecs"
+  | "clearBubble"
+  | "changeSizeBy"
+  | "setSizePercent"
+  | "clearGraphicEffects"
+  | "goToFrontBack"
+  | "goForwardBackwardLayers"
+  | "ifSensing"
+  | "repeatUntilVariable"
+  | "senseDistanceToVariable"
+  | "sensePropertyToVariable"
+  | "resetTimer"
+  | "mathOperation"
+  | "setRandomVariable"
+  | "mathFunctionVariable"
+  | "joinTextVariable"
+  | "showVariable"
+  | "hideVariable";
 
 export type ScriptTarget = "self" | "other" | "scene";
 export type VariableScope = "entity" | "scene";
 export type GenericProperty = "x" | "y" | "vx" | "vy" | "w" | "h" | "opacity" | "rotation" | "visible" | "solid" | "gravity" | "controllable" | "hazard" | "collectible" | "goal";
 export type VariableOperator = "eq" | "neq" | "gte" | "lte";
+export type SensingCondition = "touchingKind" | "touchingEdge" | "keyPressed" | "distanceLt";
+export type MathOperator = "add" | "sub" | "mul" | "div" | "mod";
+export type MathFunction = "abs" | "floor" | "ceil" | "round" | "sqrt" | "sin" | "cos";
 
 export interface Block {
   id: string;
@@ -139,6 +172,12 @@ export interface Block {
   property?: GenericProperty;
   operator?: VariableOperator;
   repeat?: number;
+  sensingCond?: SensingCondition;
+  sensingKey?: "left" | "right" | "jump";
+  varA?: string;
+  varB?: string;
+  mathOp?: MathOperator;
+  mathFn?: MathFunction;
 }
 
 export interface Script {
@@ -246,20 +285,53 @@ export const BLOCK_LABELS: Record<BlockKind, string> = {
   ifVariable: "If variable",
   repeat: "Repeat",
   setObjectSize: "Set object size (target)",
+  playMusic: "Play music",
+  stopMusic: "Stop music",
+  // Scratch 3.0
+  moveSteps: "Move steps",
+  turnRight: "Turn right (deg)",
+  turnLeft: "Turn left (deg)",
+  pointInDirection: "Point in direction",
+  gotoTarget: "Go to target / random",
+  glideTo: "Glide to (x,y)",
+  ifOnEdgeBounce: "If on edge, bounce",
+  sayForSecs: "Say for (ms)",
+  say: "Say",
+  thinkForSecs: "Think for (ms)",
+  clearBubble: "Clear speech bubble",
+  changeSizeBy: "Change size by (%)",
+  setSizePercent: "Set size to (%)",
+  clearGraphicEffects: "Clear graphic effects",
+  goToFrontBack: "Go to front/back layer",
+  goForwardBackwardLayers: "Change layer Z by",
+  ifSensing: "If sensing condition",
+  repeatUntilVariable: "Repeat until variable",
+  senseDistanceToVariable: "Sense distance to variable",
+  sensePropertyToVariable: "Sense property to variable",
+  resetTimer: "Reset timer",
+  mathOperation: "Math operation",
+  setRandomVariable: "Pick random into variable",
+  mathFunctionVariable: "Math function into variable",
+  joinTextVariable: "Join text into variable",
+  showVariable: "Show variable monitor",
+  hideVariable: "Hide variable monitor",
 };
 
 export const ALL_BLOCKS: BlockKind[] = [
   "jump", "impulse", "setVx", "setVy", "setSpeed", "stop", "flipVx", "flipVy", "bounceY",
   "setX", "setY", "moveX", "moveY", "teleport", "wrapScreen",
+  "moveSteps", "turnRight", "turnLeft", "pointInDirection", "gotoTarget", "glideTo", "ifOnEdgeBounce",
   "addScore", "setScore", "resetScore", "addLives", "setLives",
   "destroySelf", "destroyOther", "cloneSelf", "spawnEntity", "removeAllOf",
   "win", "lose", "restartScene", "hurtPlayer",
-  "playSound", "playRandomSound", "vibrate", "shake",
+  "playSound", "playMusic", "stopMusic", "playRandomSound", "vibrate", "shake",
   "setColor", "setBg", "setVisible", "setOpacity", "setSize", "setObjectSize",
+  "sayForSecs", "say", "thinkForSecs", "clearBubble", "changeSizeBy", "setSizePercent", "clearGraphicEffects", "goToFrontBack", "goForwardBackwardLayers",
   "setGravity", "setControllable", "setHazard", "setSolid", "setCollectible", "setGoalFlag",
   "setSceneGravity", "setHitbox", "clearHitbox",
   "faceTarget", "chase", "knockback", "setFacing", "pushAway",
-  "log", "comment", "if", "wait", "setVariable", "changeVariable", "setProperty", "changeProperty", "broadcast", "ifVariable", "repeat",
+  "log", "comment", "if", "ifSensing", "wait", "setVariable", "changeVariable", "setProperty", "changeProperty", "broadcast", "ifVariable", "repeat", "repeatUntilVariable",
+  "senseDistanceToVariable", "sensePropertyToVariable", "resetTimer", "mathOperation", "setRandomVariable", "mathFunctionVariable", "joinTextVariable", "showVariable", "hideVariable",
 ];
 
 export interface RuntimeHooks {
@@ -273,6 +345,8 @@ interface ExecCtx {
   scene: Scene;
   state: RuntimeState;
   hooks: RuntimeHooks;
+  input?: RuntimeInput;
+  clock?: number;
   emitMessage?: (message: string) => void;
 }
 
@@ -333,7 +407,9 @@ function execBlock(b: Block, ctx: ExecCtx) {
       ctx.self.y = b.y ?? ctx.self.y;
       break;
     case "log": console.log("[script]", b.text ?? "", ctx.self.kind); break;
-    case "playSound": playSoundUrl(b.soundUrl); break;
+    case "playSound": playSoundUrl(b.soundUrl || b.soundName || b.text); break;
+    case "playMusic": startMusic(b.soundUrl || b.soundName || b.text); break;
+    case "stopMusic": stopMusic(); break;
     case "vibrate": vibrate(Math.max(1, b.value ?? 50)); break;
     case "shake": ctx.hooks.shake(Math.max(1, b.value ?? 8), 0.3); break;
     case "setColor": if (b.color) ctx.self.color = b.color; break;
@@ -489,6 +565,236 @@ function execBlock(b: Block, ctx: ExecCtx) {
       break;
     }
     case "broadcast": ctx.emitMessage?.(b.text?.trim() || "message"); break;
+    case "moveSteps": {
+      const steps = b.value ?? 10;
+      const dir = ctx.self.facing === -1 ? -1 : 1;
+      ctx.self.x += steps * dir;
+      break;
+    }
+    case "turnRight": {
+      const degR = b.value ?? 15;
+      ctx.self.rotation = (((ctx.self.rotation || 0) + degR) % 360 + 360) % 360;
+      break;
+    }
+    case "turnLeft": {
+      const degL = b.value ?? 15;
+      ctx.self.rotation = (((ctx.self.rotation || 0) - degL) % 360 + 360) % 360;
+      break;
+    }
+    case "pointInDirection": {
+      const degP = b.value ?? 90;
+      ctx.self.rotation = (((degP - 90) % 360) + 360) % 360;
+      const fDir: 1 | -1 = degP < 0 || (degP > 180 && degP < 360) ? -1 : 1;
+      ctx.self.facing = fDir;
+      ctx.self.flipX = fDir === -1;
+      break;
+    }
+    case "gotoTarget": {
+      const dest = (b.text || "player").trim();
+      if (dest === "random") {
+        ctx.self.x = Math.round(Math.random() * Math.max(40, ctx.scene.width - ctx.self.w));
+        ctx.self.y = Math.round(Math.random() * Math.max(40, ctx.scene.height - ctx.self.h - 80));
+      } else {
+        const gTgt = findFirstOfKind(ctx.scene, dest as EntityKind);
+        if (gTgt) { ctx.self.x = gTgt.x; ctx.self.y = gTgt.y; }
+      }
+      break;
+    }
+    case "glideTo": {
+      const tx = b.x ?? ctx.self.x;
+      const ty = b.y ?? ctx.self.y;
+      const durSec = Math.max(0.05, (b.value ?? 500) / 1000);
+      ctx.self.vx = (tx - ctx.self.x) / durSec;
+      ctx.self.vy = (ty - ctx.self.y) / durSec;
+      break;
+    }
+    case "ifOnEdgeBounce": {
+      const eb = ctx.self;
+      if (eb.x <= 0) { eb.x = 0; eb.vx = Math.abs(eb.vx || 120); eb.facing = 1; eb.flipX = false; }
+      else if (eb.x + eb.w >= ctx.scene.width) { eb.x = Math.max(0, ctx.scene.width - eb.w); eb.vx = -Math.abs(eb.vx || 120); eb.facing = -1; eb.flipX = true; }
+      if (eb.y <= 0) { eb.y = 0; eb.vy = Math.abs(eb.vy || 120); }
+      else if (eb.y + eb.h >= ctx.scene.height) { eb.y = Math.max(0, ctx.scene.height - eb.h); eb.vy = -Math.abs(eb.vy || 120); }
+      break;
+    }
+    case "sayForSecs":
+    case "thinkForSecs": {
+      const bDur = Math.max(0.1, (b.value ?? 2000) / 1000);
+      ctx.self._bubbleText = String(b.text ?? "¡Hola!");
+      ctx.self._bubbleKind = b.kind === "thinkForSecs" ? "think" : "say";
+      ctx.self._bubbleUntil = (ctx.clock || 0) + bDur;
+      break;
+    }
+    case "say": {
+      ctx.self._bubbleText = String(b.text ?? "¡Hola!");
+      ctx.self._bubbleKind = "say";
+      ctx.self._bubbleUntil = 0;
+      break;
+    }
+    case "clearBubble": {
+      ctx.self._bubbleText = null;
+      ctx.self._bubbleUntil = 0;
+      break;
+    }
+    case "changeSizeBy": {
+      const dPct = b.value ?? 10;
+      const sFactor = Math.max(0.1, 1 + dPct / 100);
+      ctx.self.w = Math.max(4, Math.round(ctx.self.w * sFactor));
+      ctx.self.h = Math.max(4, Math.round(ctx.self.h * sFactor));
+      break;
+    }
+    case "setSizePercent": {
+      if (!ctx.self._baseW) ctx.self._baseW = ctx.self.w;
+      if (!ctx.self._baseH) ctx.self._baseH = ctx.self.h;
+      const sPct = Math.max(10, Math.min(500, b.value ?? 100));
+      ctx.self.w = Math.max(4, Math.round(ctx.self._baseW * (sPct / 100)));
+      ctx.self.h = Math.max(4, Math.round(ctx.self._baseH * (sPct / 100)));
+      break;
+    }
+    case "clearGraphicEffects": {
+      ctx.self.opacity = 1;
+      ctx.self.rotation = 0;
+      ctx.self._bubbleText = null;
+      break;
+    }
+    case "goToFrontBack": {
+      ctx.self.z = b.text === "back" ? -10 : 10;
+      break;
+    }
+    case "goForwardBackwardLayers": {
+      ctx.self.z = Math.max(-20, Math.min(20, (ctx.self.z || 0) + (b.value ?? 1)));
+      break;
+    }
+    case "senseDistanceToVariable": {
+      const sTgt = findFirstOfKind(ctx.scene, (b.varA as EntityKind) || "player");
+      const sKey = b.text?.trim() || "distancia";
+      if (sTgt) {
+        const sDx = (sTgt.x + sTgt.w / 2) - (ctx.self.x + ctx.self.w / 2);
+        const sDy = (sTgt.y + sTgt.h / 2) - (ctx.self.y + ctx.self.h / 2);
+        variableBag(ctx, b.scope || "scene")[sKey] = Math.round(Math.hypot(sDx, sDy));
+      } else {
+        variableBag(ctx, b.scope || "scene")[sKey] = 9999;
+      }
+      break;
+    }
+    case "sensePropertyToVariable": {
+      const spKey = b.text?.trim() || "sensor";
+      const spProp = b.varB || b.property || "x";
+      const spWho = b.varA || "player";
+      const spBag = variableBag(ctx, b.scope || "scene");
+      if (spProp === "score") spBag[spKey] = ctx.state.score;
+      else if (spProp === "lives") spBag[spKey] = ctx.state.lives;
+      else if (spProp === "time") spBag[spKey] = Math.round(ctx.state.time * 10) / 10;
+      else {
+        const spEnt = spWho === "self" ? ctx.self : findFirstOfKind(ctx.scene, spWho as EntityKind);
+        const rec = spEnt as unknown as Record<string, unknown> | null;
+        if (rec && rec[spProp] !== undefined) {
+          const spVal = rec[spProp];
+          spBag[spKey] = typeof spVal === "number" ? Math.round(spVal) : String(spVal || 0);
+        }
+      }
+      break;
+    }
+    case "resetTimer": {
+      ctx.state.time = 0;
+      break;
+    }
+    case "mathOperation": {
+      const mBag = variableBag(ctx, b.scope || "scene");
+      const mKey = b.text?.trim() || "resultado";
+      const readOp = (vName: string | undefined, fb: number): number => {
+        if (vName && String(vName).trim()) {
+          const rawStr = String(vName).trim();
+          const tr = rawStr.replace(/^\$/, "");
+          const numL = Number(tr);
+          if (rawStr.charAt(0) !== "$" && Number.isFinite(numL)) return numL;
+          if (ctx.scene.variables && ctx.scene.variables[tr] !== undefined) return Number(ctx.scene.variables[tr]) || 0;
+          if (ctx.self.variables && ctx.self.variables[tr] !== undefined) return Number(ctx.self.variables[tr]) || 0;
+          if (Number.isFinite(numL)) return numL;
+        }
+        return fb;
+      };
+      const opA = readOp(b.varA, b.x ?? 0);
+      const opB = readOp(b.varB, b.y ?? b.value ?? 1);
+      const mOp = b.mathOp || "add";
+      let mRes = 0;
+      if (mOp === "add") mRes = opA + opB;
+      else if (mOp === "sub") mRes = opA - opB;
+      else if (mOp === "mul") mRes = opA * opB;
+      else if (mOp === "div") mRes = opB !== 0 ? Math.round((opA / opB) * 100) / 100 : 0;
+      else if (mOp === "mod") mRes = opB !== 0 ? opA % opB : 0;
+      mBag[mKey] = mRes;
+      break;
+    }
+    case "setRandomVariable": {
+      const rBag = variableBag(ctx, b.scope || "scene");
+      const rKey = b.text?.trim() || "azar";
+      const rMin = Math.ceil(Math.min(b.x ?? 1, b.y ?? 10));
+      const rMax = Math.floor(Math.max(b.x ?? 1, b.y ?? 10));
+      rBag[rKey] = Math.floor(Math.random() * (rMax - rMin + 1)) + rMin;
+      break;
+    }
+    case "mathFunctionVariable": {
+      const fBag = variableBag(ctx, b.scope || "scene");
+      const fKey = b.text?.trim() || "resultado";
+      let fIn = b.value ?? 0;
+      if (b.varA && String(b.varA).trim()) {
+        const vn = String(b.varA).trim().replace(/^\$/, "");
+        const numLit = Number(vn);
+        const rv = (ctx.scene.variables && ctx.scene.variables[vn] !== undefined)
+          ? ctx.scene.variables[vn]
+          : (ctx.self.variables ? ctx.self.variables[vn] : undefined);
+        if (rv !== undefined) fIn = Number(rv) || 0;
+        else if (Number.isFinite(numLit)) fIn = numLit;
+      }
+      const fn = b.mathFn || "abs";
+      let fOut = fIn;
+      if (fn === "abs") fOut = Math.abs(fIn);
+      else if (fn === "floor") fOut = Math.floor(fIn);
+      else if (fn === "ceil") fOut = Math.ceil(fIn);
+      else if (fn === "round") fOut = Math.round(fIn);
+      else if (fn === "sqrt") fOut = Math.round(Math.sqrt(Math.max(0, fIn)) * 100) / 100;
+      else if (fn === "sin") fOut = Math.round(Math.sin((fIn * Math.PI) / 180) * 100) / 100;
+      else if (fn === "cos") fOut = Math.round(Math.cos((fIn * Math.PI) / 180) * 100) / 100;
+      fBag[fKey] = fOut;
+      break;
+    }
+    case "joinTextVariable": {
+      const jBag = variableBag(ctx, b.scope || "scene");
+      const jKey = b.text?.trim() || "texto";
+      const resolveJoinPart = (part: string | undefined): string => {
+        if (!part) return "";
+        const s = String(part);
+        if (s.charAt(0) === "$" && s.length > 1) {
+          const vName = s.slice(1).trim();
+          const vVal = (ctx.scene.variables && ctx.scene.variables[vName] !== undefined)
+            ? ctx.scene.variables[vName]
+            : (ctx.self.variables ? ctx.self.variables[vName] : undefined);
+          if (vVal !== undefined) return String(vVal);
+        }
+        return s;
+      };
+      jBag[jKey] = resolveJoinPart(b.varA) + resolveJoinPart(b.varB);
+      break;
+    }
+    case "showVariable":
+    case "hideVariable": {
+      const vKey = b.text?.trim() || "variable";
+      const vVis = b.kind === "showVariable";
+      ctx.scene.variableDefinitions ??= [];
+      const vFound = ctx.scene.variableDefinitions.find(v => v.name === vKey);
+      if (vFound) vFound.visibleOnStage = vVis;
+      else {
+        ctx.scene.variableDefinitions.push({
+          id: makeId(),
+          name: vKey,
+          scope: b.scope || "scene",
+          entityId: b.scope === "entity" ? ctx.self.id : undefined,
+          initialValue: 0,
+          visibleOnStage: vVis,
+        });
+      }
+      break;
+    }
   }
 }
 
@@ -639,9 +945,18 @@ export function applyScriptEdit(original: Script, edited: unknown): ScriptEditRe
   };
 }
 
-/** Lista de scripts normalizados: acepta un array o un envoltorio `{ scripts }`. */
+/** Lista de scripts normalizados: acepta un array, un objeto Script único o un envoltorio `{ scripts }` / `{ script }`. */
 export function normalizeScripts(raw: unknown): Script[] {
-  const list = Array.isArray(raw) ? raw : (raw as { scripts?: unknown } | null)?.scripts;
+  const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+  const list = Array.isArray(raw)
+    ? raw
+    : Array.isArray(obj?.scripts)
+      ? (obj.scripts as unknown[])
+      : obj?.script
+        ? [obj.script]
+        : obj && typeof obj.event === "string"
+          ? [obj]
+          : null;
   if (!Array.isArray(list)) return [];
   return list.flatMap(item => {
     const script = normalizeScript(item);
@@ -653,6 +968,35 @@ function ifConditionPasses(b: Block, ctx: ExecCtx) {
   const v = b.value ?? 0;
   if (b.cond === "scoreGte") return ctx.state.score >= v;
   if (b.cond === "scoreLte") return ctx.state.score <= v;
+  return false;
+}
+
+function sensingConditionPasses(b: Block, ctx: ExecCtx): boolean {
+  const cond = b.sensingCond || "touchingKind";
+  if (cond === "touchingKind") {
+    const kind = b.text || "player";
+    for (const other of ctx.scene.entities) {
+      if (other.id === ctx.self.id || other.x < -9000) continue;
+      if (kind !== "any" && other.kind !== kind) continue;
+      if (intersects(ctx.self, other)) return true;
+    }
+    return false;
+  }
+  if (cond === "touchingEdge") {
+    const e = ctx.self;
+    return e.x <= 2 || e.x + e.w >= ctx.scene.width - 2 || e.y <= 2 || e.y + e.h >= ctx.scene.height - 2;
+  }
+  if (cond === "keyPressed") {
+    const k = b.sensingKey || "jump";
+    return !!(ctx.input && ctx.input[k]);
+  }
+  if (cond === "distanceLt") {
+    const tgt = findFirstOfKind(ctx.scene, (b.text as EntityKind) || "player");
+    if (!tgt) return false;
+    const dx = (tgt.x + tgt.w / 2) - (ctx.self.x + ctx.self.w / 2);
+    const dy = (tgt.y + tgt.h / 2) - (ctx.self.y + ctx.self.h / 2);
+    return Math.hypot(dx, dy) <= (b.value ?? 120);
+  }
   return false;
 }
 
@@ -692,7 +1036,14 @@ function execFrames(stack: ExecFrame[], ctx: ExecCtx, now: number, suspend: (sta
     }
 
     if (block.kind === "if") {
-      if (ifConditionPasses(block, ctx)) stack.push({ blocks: blockList(block.thenBlocks), index: 0, repeatLeft: 1 });
+      const branch = ifConditionPasses(block, ctx) ? block.thenBlocks : block.elseBlocks;
+      if (branch && branch.length) stack.push({ blocks: blockList(branch), index: 0, repeatLeft: 1 });
+      continue;
+    }
+
+    if (block.kind === "ifSensing") {
+      const branch = sensingConditionPasses(block, ctx) ? block.thenBlocks : block.elseBlocks;
+      if (branch && branch.length) stack.push({ blocks: blockList(branch), index: 0, repeatLeft: 1 });
       continue;
     }
 
@@ -706,6 +1057,15 @@ function execFrames(stack: ExecFrame[], ctx: ExecCtx, now: number, suspend: (sta
     if (block.kind === "repeat") {
       const amount = Math.min(100, Math.max(0, Math.floor(block.repeat ?? block.value ?? 1)));
       if (amount > 0) stack.push({ blocks: blockList(block.thenBlocks), index: 0, repeatLeft: amount });
+      continue;
+    }
+
+    if (block.kind === "repeatUntilVariable") {
+      const current = variableBag(ctx, block.scope)[block.text?.trim() || "variable"];
+      if (!variablePasses(current, block.operator, block.value ?? 0)) {
+        const inner = blockList(block.thenBlocks);
+        if (inner.length) stack.push({ blocks: inner, index: 0, repeatLeft: 1 });
+      }
       continue;
     }
 
@@ -765,6 +1125,7 @@ export function createScriptRunner(): ScriptRunner {
         scene: last.scene,
         state: last.state,
         hooks: last.hooks,
+        clock,
         emitMessage: (message: string) => uiMessages.add(message),
       };
       for (const script of scripts) {
@@ -795,7 +1156,7 @@ export function createScriptRunner(): ScriptRunner {
       const run = (script: Script, self: Entity, other?: Entity) => {
         const key = keyFor(script, self);
         if (suspended.has(key)) return;
-        const ctx = { self, other, scene, state, hooks, emitMessage: (message: string) => messages.add(message) };
+        const ctx: ExecCtx = { self, other, scene, state, hooks, input, clock, emitMessage: (message: string) => messages.add(message) };
         execFrames(
           [{ blocks: blockList(script.blocks), index: 0, repeatLeft: 1 }],
           ctx,

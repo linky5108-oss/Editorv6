@@ -186,6 +186,8 @@ export function GameCard({
         <GameRuntime
           scene={playing}
           scenes={playingProject?.scenes}
+          assets={playingProject?.assets}
+          customRuntime={playingProject?.customRuntime}
           title={title}
           fpsCap={cfg?.fpsCap ?? 60}
           showHUD={cfg?.showHUD ?? true}
@@ -196,6 +198,7 @@ export function GameCard({
           musicUrl={cfg?.musicUrl ?? null}
           touchControls={cfg?.touchControls ?? true}
           autoPause={cfg?.autoPause ?? true}
+          cameraOrientation={cfg?.cameraOrientation ?? "horizontal"}
           onExit={closeGame}
         />
         <button

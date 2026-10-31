@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Settings, Layers, Copy, X, Eye, EyeOff, Lock, Unlock, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Trash2, Plus, Upload, Home, MousePointer2, Boxes, Square, Flower2, Triangle, Target, PersonStanding, Eraser, SlidersHorizontal, PanelsTopLeft, Image as ImageIcon, Layers3, Play, LibraryBig, Save, Gem, Pencil, Sparkles } from "lucide-react";
+import { Settings, Layers, Copy, X, Eye, EyeOff, Lock, Unlock, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Trash2, Plus, Upload, Home, MousePointer2, Boxes, Eraser, SlidersHorizontal, PanelsTopLeft, Image as ImageIcon, Layers3, Play, LibraryBig, Save, Pencil, Sparkles, Puzzle } from "lucide-react";
 import { schedulePushToCloud, scheduleAssetLibraryPush, pullAssetLibraryFromCloud, activateCloudProjectIfBlank } from "@/lib/engine/cloud-sync";
 import { supabase } from "@/integrations/supabase/client";
 import { Link, useRouter } from "@tanstack/react-router";
 import { PublishGameDialog } from "./PublishGameDialog";
-import type { CustomSoundSynth, EntityKind, Project, SpriteAsset, Entity, Scene, Hitbox, SceneLayer } from "@/lib/engine/core";
+import type { AudioAsset, CustomSoundSynth, EntityKind, Project, SpriteAsset, Entity, Scene, Hitbox, SceneLayer } from "@/lib/engine/core";
+import { getProjectAudioLibrary, saveAudioLibraryToProject } from "@/lib/engine/audio-library";
+import { playSoundUrl, stopCustomSounds, startMusic, stopMusic } from "@/lib/engine/sfx";
 import { placedEntitySize } from "@/lib/engine/sprite-placement";
 import { applyEditedDrawing } from "@/lib/engine/sprite-edit";
 import {
-  newScene, uid, ensureSceneLayers, DEFAULT_LAYER_ID, duplicateEntityInScene, isPlayerEntity,
+  newScene, uid, ensureSceneLayers, DEFAULT_LAYER_ID, duplicateEntityInScene, isPlayerEntity, isMainGoalEntity, entityKindLabel, KIND_PRESETS,
   addSceneLayer, removeSceneLayer,
   attachEntityToParent, canAttachAsChild, childrenOf, createChildFromPreset,
   detachEntityFromParent, entityById, hierarchyDepth, removeEntityWithChildren, setEntityPosition,
@@ -29,6 +31,7 @@ import { PaintEditor } from "./PaintEditor";
 import { UIEditor } from "./UIEditor";
 import { ProjectManager } from "./ProjectManager";
 import { OrionAiModeScreen } from "./OrionAiModeScreen";
+import { HumanScratchScreen } from "./HumanScratchScreen";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import { ScriptEditor } from "./ScriptEditor";
@@ -43,14 +46,28 @@ type ExitRequest = { kind: "manager" | "home" | "back"; proceed?: () => void };
 type Tool = EntityKind | "select" | "erase";
 type Tab = "build" | "inspect" | "ui" | "scenes" | "textures" | "settings";
 
+function PresetToolIcon({ kind }: { kind: EntityKind }) {
+  const preset = KIND_PRESETS[kind];
+  const src = entityToEditableSvgDataUrl(preset);
+  return (
+    <img
+      src={src}
+      alt={kind}
+      data-testid={`tool-preset-icon-${kind}`}
+      className="h-4 w-4 shrink-0 object-contain drop-shadow-[0_0_4px_rgba(125,211,252,0.35)]"
+      draggable={false}
+    />
+  );
+}
+
 const TOOL_LIST: { id: Tool; tKey: string; icon: ReactNode }[] = [
   { id: "select", tKey: "tool.select", icon: <MousePointer2 size={15} strokeWidth={1.9} /> },
-  { id: "platform", tKey: "tool.platform", icon: <Square size={15} strokeWidth={1.9} /> },
-  { id: "decor", tKey: "tool.decor", icon: <Flower2 size={15} strokeWidth={1.9} /> },
-  { id: "coin", tKey: "tool.coin", icon: <Gem size={15} strokeWidth={1.9} /> },
-  { id: "enemy", tKey: "tool.enemy", icon: <Triangle size={15} strokeWidth={1.9} /> },
-  { id: "goal", tKey: "tool.goal", icon: <Target size={15} strokeWidth={1.9} /> },
-  { id: "player", tKey: "tool.player", icon: <PersonStanding size={15} strokeWidth={1.9} /> },
+  { id: "platform", tKey: "tool.platform", icon: <PresetToolIcon kind="platform" /> },
+  { id: "decor", tKey: "tool.decor", icon: <PresetToolIcon kind="decor" /> },
+  { id: "coin", tKey: "tool.coin", icon: <PresetToolIcon kind="coin" /> },
+  { id: "enemy", tKey: "tool.enemy", icon: <PresetToolIcon kind="enemy" /> },
+  { id: "goal", tKey: "tool.goal", icon: <PresetToolIcon kind="goal" /> },
+  { id: "player", tKey: "tool.player", icon: <PresetToolIcon kind="player" /> },
   { id: "erase", tKey: "tool.erase", icon: <Eraser size={15} strokeWidth={1.9} /> },
 ];
 
@@ -83,6 +100,9 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
   const [playing, setPlaying] = useState(false);
   const [orionModeOpen, setOrionModeOpen] = useState(false);
   const [scriptManualEntityId, setScriptManualEntityId] = useState<string | null>(null);
+  const [humanScratchOpen, setHumanScratchOpen] = useState(false);
+  const [humanScratchEntityId, setHumanScratchEntityId] = useState<string | null>(null);
+  const [humanScratchUiId, setHumanScratchUiId] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [showManager, setShowManager] = useState(false);
@@ -267,8 +287,46 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
 
   const openScriptManual = (entityId?: string | null) => {
     setScriptManualEntityId(entityId ?? selectedId ?? null);
+    setHumanScratchOpen(false);
     setOrionModeOpen(true);
   };
+
+  const openHumanScratch = (entityId?: string | null, uiId?: string | null) => {
+    setHumanScratchEntityId(entityId ?? selectedId ?? null);
+    setHumanScratchUiId(uiId ?? null);
+    setOrionModeOpen(false);
+    setHumanScratchOpen(true);
+  };
+
+  if (humanScratchOpen) {
+    return (
+      <HumanScratchScreen
+        project={project}
+        initialTargetEntityId={humanScratchEntityId}
+        initialTargetUiId={humanScratchUiId}
+        onChangeProject={(nextProject) => {
+          const synced = syncRuntimeAndTexturesToProject(nextProject);
+          setProject(synced);
+          if (projectId) {
+            saveProjectById(projectId, synced);
+            lastSavedRef.current = synced;
+            setDirty(false);
+            setSavedAt(Date.now());
+            schedulePushToCloud(projectId, synced);
+          }
+        }}
+        onSaveProject={saveNow}
+        onSwitchToManualAi={() => {
+          setHumanScratchOpen(false);
+          setOrionModeOpen(true);
+        }}
+        onExit={() => {
+          setProject((prev) => (prev ? syncRuntimeAndTexturesToProject(prev) : prev));
+          setHumanScratchOpen(false);
+        }}
+      />
+    );
+  }
 
   if (orionModeOpen) {
     return (
@@ -287,6 +345,10 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
           }
         }}
         onSaveProject={saveNow}
+        onSwitchToHumanScratch={() => {
+          setOrionModeOpen(false);
+          setHumanScratchOpen(true);
+        }}
         onExit={() => {
           setProject((prev) => (prev ? syncRuntimeAndTexturesToProject(prev) : prev));
           setOrionModeOpen(false);
@@ -314,6 +376,7 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
           touchControls={playProject.settings.touchControls ?? true}
           autoPause={playProject.settings.autoPause ?? true}
           showHitboxes={playProject.settings.showHitboxes ?? false}
+          cameraOrientation={playProject.settings.cameraOrientation ?? "horizontal"}
           onExit={() => setPlaying(false)}
         />
       </div>
@@ -494,6 +557,7 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
             onOpenLibrary={() => setLibraryOpen(true)}
             project={project}
             onOpenScriptManual={openScriptManual}
+            onOpenHumanScratch={(entId) => openHumanScratch(entId, null)}
             onRegisterTexture={(dataUrl, name, w, h) => {
               setProject((prev) =>
                 prev
@@ -507,7 +571,11 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
         )}
 
         {tab === "ui" && (
-          <UIEditor scene={activeScene} onChange={updateScene} />
+          <UIEditor
+            scene={activeScene}
+            onChange={updateScene}
+            onOpenHumanScratch={(uiId) => openHumanScratch(null, uiId)}
+          />
         )}
 
         {tab === "scenes" && (
@@ -578,6 +646,7 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
             onChange={setProject}
             beta={beta}
             onOpenScriptManual={() => openScriptManual(null)}
+            onOpenHumanScratch={() => openHumanScratch(null, null)}
           />
         )}
 
@@ -756,14 +825,14 @@ function LibrarySheet({
               <div key={item.id} className="panel rounded-md p-2 flex flex-col items-center gap-1.5 border border-border/40 hover:border-primary/60 transition">
                 <button
                   onClick={() => onPlace(item)}
-                  className="w-full aspect-square rounded grid place-items-center active:scale-95 transition"
-                  style={{ background: item.preset.color + "33", border: `1px solid ${item.preset.color}` }}
+                  className="w-full aspect-square rounded grid place-items-center p-2 active:scale-95 transition"
+                  style={{ background: item.preset.color + "22", border: `1px solid ${item.preset.color}66` }}
                 >
-                  {item.preset.texture ? (
-                    <img src={item.preset.texture} alt={item.name} className="max-w-full max-h-full object-contain" />
-                  ) : (
-                    <span className="text-xs font-display text-primary-glow">{item.preset.kind.slice(0,3).toUpperCase()}</span>
-                  )}
+                  <img
+                    src={item.preset.texture || entityToEditableSvgDataUrl(item.preset)}
+                    alt={item.name}
+                    className="max-w-full max-h-full object-contain"
+                  />
                 </button>
                 <span className="text-[10px] font-mono text-foreground truncate w-full text-center">{item.name}</span>
                 <button onClick={() => onRemove(item.id)} className="text-[9px] text-destructive">✕ borrar</button>
@@ -793,6 +862,7 @@ function InspectorPanel({
   onOpenLibrary,
   project,
   onOpenScriptManual,
+  onOpenHumanScratch,
   onRegisterTexture,
 }: {
   scene: import("@/lib/engine/core").Scene;
@@ -803,6 +873,7 @@ function InspectorPanel({
   onOpenLibrary: () => void;
   project?: Project;
   onOpenScriptManual?: (entityId?: string | null) => void;
+  onOpenHumanScratch?: (entityId?: string | null) => void;
   onRegisterTexture?: (dataUrl: string, name: string, w: number, h: number) => void;
 }) {
   const t = useT();
@@ -812,18 +883,33 @@ function InspectorPanel({
     const totalSceneScripts = scene.entities.reduce((acc, e) => acc + (e.scripts?.length ?? 0), 0);
     return (
       <div className="h-full overflow-auto p-4 space-y-3">
-        <button
-          type="button"
-          onClick={() => onOpenScriptManual?.(null)}
-          data-testid="open-scene-script-manual-btn"
-          className="w-full px-3 py-2.5 rounded-md bg-primary/10 border border-accent/50 text-primary-glow font-display text-xs tracking-widest flex items-center justify-between glow-border"
-        >
-          <span className="inline-flex items-center gap-1.5">
-            <Sparkles size={14} className="text-primary" />
-            <span>SCRIPT MANUAL · IA</span>
-          </span>
-          <span className="font-mono text-[10px] opacity-80">{totalSceneScripts} SCRIPT MANUAL</span>
-        </button>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => onOpenScriptManual?.(null)}
+            data-testid="open-scene-script-manual-btn"
+            className="w-full px-3 py-2.5 rounded-md bg-primary/10 border border-accent/50 text-primary-glow font-display text-xs tracking-widest flex items-center justify-between glow-border"
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <Sparkles size={14} className="text-primary" />
+              <span>SCRIPT MANUAL · IA</span>
+            </span>
+            <span className="font-mono text-[10px] opacity-80">{totalSceneScripts}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onOpenHumanScratch?.(null)}
+            data-testid="open-scene-human-scratch-btn"
+            className="w-full px-3 py-2.5 rounded-md bg-amber-500/15 border border-amber-400/50 text-amber-300 font-display text-xs tracking-widest flex items-center justify-between hover:bg-amber-500/25 transition"
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <Puzzle size={14} className="text-amber-400" />
+              <span>SCRIPTS HUMANOS · SCRATCH</span>
+            </span>
+            <span className="font-mono text-[10px] opacity-90">{totalSceneScripts}</span>
+          </button>
+        </div>
 
         <SectionTitle>{t("scene.props")}</SectionTitle>
         <Field label={t("settings.gameName")} value={scene.name} onChange={v => onChangeScene({ ...scene, name: v })} />
@@ -896,7 +982,7 @@ function InspectorPanel({
     <div className="h-full overflow-auto p-4 space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 min-w-0">
-          <SectionTitle>{ent.kind.toUpperCase()}</SectionTitle>
+          <SectionTitle>{entityKindLabel(ent)}</SectionTitle>
           {ent.parentId && (
             <span className="shrink-0 rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[9px] font-display font-semibold tracking-wider text-accent">
               HIJO
@@ -961,7 +1047,12 @@ function InspectorPanel({
       />
 
       <AnimationsButton entity={ent} onUpdate={update} />
-      <ScriptsButton entity={ent} onUpdate={update} onOpenScriptManual={() => onOpenScriptManual?.(ent.id)} />
+      <ScriptsButton
+        entity={ent}
+        onUpdate={update}
+        onOpenScriptManual={() => onOpenScriptManual?.(ent.id)}
+        onOpenHumanScratch={() => onOpenHumanScratch?.(ent.id)}
+      />
       <DialogEditor entity={ent} onUpdate={update} />
       <HitboxEditor entity={ent} onUpdate={update} />
 
@@ -1075,7 +1166,7 @@ function InspectorPanel({
         >{t("inspector.clone")}</button>
       </div>
 
-      {!isPlayerEntity(ent) && (
+      {!isPlayerEntity(ent) && !isMainGoalEntity(ent) && (
         <button
           onClick={() => {
             // Con la rama completa: un padre borrado no deja hijos sueltos.
@@ -1101,24 +1192,26 @@ function ScenesPanel({
   onOpen: (id: string) => void;
 }) {
   return (
-    <div className="h-full overflow-auto p-4 space-y-3">
+    <div className="h-full overflow-auto p-4 space-y-4">
       <SectionTitle>ESCENAS</SectionTitle>
       <div className="space-y-2">
         {project.scenes.map(s => (
-          <div key={s.id} className="surface rounded-xl p-3 flex items-center gap-3 transition-colors hover:border-primary/35">
+          <div key={s.id} className="surface rounded-xl p-3 flex flex-wrap items-center gap-3 transition-colors hover:border-primary/35">
             <div
               className="w-12 h-12 rounded-lg bg-primary/10 border border-primary/15 grid place-items-center text-primary shrink-0"
               title={`${s.entities.length} elementos`}
             >
               <Layers size={20} />
             </div>
-            <div className="flex-1 min-w-0">
+            <div className="flex-1 min-w-[140px]">
               <input
                 value={s.name}
                 onChange={e => onChange({ ...project, scenes: project.scenes.map(x => x.id === s.id ? { ...x, name: e.target.value } : x) })}
                 className="w-full bg-transparent font-display text-sm focus:outline-none focus:bg-input/40 rounded px-1"
               />
-              <div className="text-[10px] font-mono text-muted-foreground px-1">{s.width}×{s.height} · g{s.gravity}</div>
+              <div className="text-[10px] font-mono text-muted-foreground px-1">
+                {s.width}×{s.height} · g{s.gravity} · {s.entities.length} obj
+              </div>
             </div>
             <button
               onClick={() => onOpen(s.id)}
@@ -1160,6 +1253,7 @@ function ScenesPanel({
           </div>
         ))}
       </div>
+
       <button
         onClick={() => {
           const s = newScene(`Escena ${project.scenes.length + 1}`);
@@ -1175,10 +1269,86 @@ function ScenesPanel({
 }
 
 
-function SettingsPanel({ project, onChange, beta = false, onOpenScriptManual }: { project: Project; onChange: (p: Project) => void; beta?: boolean; onOpenScriptManual?: () => void }) {
+function SettingsPanel({ project, onChange, beta = false, onOpenScriptManual, onOpenHumanScratch }: { project: Project; onChange: (p: Project) => void; beta?: boolean; onOpenScriptManual?: () => void; onOpenHumanScratch?: () => void }) {
   useT();
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const audioLibrary = useMemo(() => getProjectAudioLibrary(project), [project]);
+
   const set = (patch: Partial<Project["settings"]>) =>
     onChange({ ...project, settings: { ...project.settings, ...patch } });
+
+  const updateAudioLibrary = (nextList: AudioAsset[], settingsPatch?: Partial<Project["settings"]>) => {
+    const updated = saveAudioLibraryToProject(project, nextList);
+    if (settingsPatch) {
+      onChange({ ...updated, settings: { ...updated.settings, ...settingsPatch } });
+    } else {
+      onChange(updated);
+    }
+  };
+
+  const handleUploadAudioFiles = (files: FileList | null, category: "music" | "sfx", setAsMainMusic = false) => {
+    if (!files || files.length === 0) return;
+    const fileArray = Array.from(files);
+    const createdAssets: AudioAsset[] = [];
+    let processed = 0;
+
+    fileArray.forEach((f) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const url = String(reader.result || "");
+        if (url) {
+          const cleanName = f.name.replace(/\.[^.]+$/, "").trim() || f.name;
+          createdAssets.push({
+            id: uid(),
+            name: cleanName,
+            url,
+            category,
+          });
+        }
+        processed++;
+        if (processed === fileArray.length && createdAssets.length > 0) {
+          const merged = [...audioLibrary];
+          for (const item of createdAssets) {
+            const existingIdx = merged.findIndex(
+              (a) => a.name.trim().toLowerCase() === item.name.trim().toLowerCase(),
+            );
+            if (existingIdx >= 0) {
+              merged[existingIdx] = { ...merged[existingIdx], url: item.url, category: item.category };
+            } else {
+              merged.push(item);
+            }
+          }
+          const first = createdAssets[0];
+          const settingsPatch =
+            setAsMainMusic && first
+              ? { musicUrl: first.url, musicName: first.name, music: true }
+              : undefined;
+          updateAudioLibrary(merged, settingsPatch);
+        }
+      };
+      reader.readAsDataURL(f);
+    });
+  };
+
+  const togglePreviewAudio = (asset: AudioAsset) => {
+    if (playingAudioId === asset.id) {
+      stopCustomSounds();
+      stopMusic();
+      setPlayingAudioId(null);
+      return;
+    }
+    stopCustomSounds();
+    stopMusic();
+    setPlayingAudioId(asset.id);
+    if (asset.category === "music") {
+      startMusic(asset.url);
+    } else {
+      playSoundUrl(asset.url);
+      window.setTimeout(() => {
+        setPlayingAudioId((curr) => (curr === asset.id ? null : curr));
+      }, 2200);
+    }
+  };
 
 
   return (
@@ -1189,6 +1359,32 @@ function SettingsPanel({ project, onChange, beta = false, onOpenScriptManual }: 
 
 
       <SectionTitle>EJECUCIÓN</SectionTitle>
+      <div>
+        <label className="text-[10px] font-display tracking-widest text-muted-foreground">ESTADO DE LA CÁMARA</label>
+        <div className="flex gap-2 mt-1">
+          {([
+            ["horizontal", "HORIZONTAL"],
+            ["vertical", "VERTICAL"],
+          ] as const).map(([mode, label]) => {
+            const active = (project.settings.cameraOrientation ?? "horizontal") === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                data-testid={`camera-orientation-${mode}`}
+                onClick={() => set({ cameraOrientation: mode })}
+                className={`flex-1 py-2 rounded-lg font-display text-xs font-semibold tracking-widest border transition active:scale-[0.96] ${
+                  active
+                    ? "bg-primary/10 border-primary/50 text-primary"
+                    : "border-line-strong bg-card text-ink-2 hover:border-primary/25 hover:text-primary"
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
       <div>
         <label className="text-[10px] font-display tracking-widest text-muted-foreground">TOPE DE FPS</label>
         <div className="flex gap-2 mt-1">
@@ -1252,7 +1448,7 @@ function SettingsPanel({ project, onChange, beta = false, onOpenScriptManual }: 
       <Slider label="Volumen" value={Math.round((project.settings.volume ?? 0.8) * 100)} min={0} max={100} step={5}
         onChange={v => set({ volume: v / 100 })} />
       <div className="space-y-1.5">
-        <label className="text-[10px] font-display tracking-widest text-muted-foreground">ARCHIVO DE MÚSICA</label>
+        <label className="text-[10px] font-display tracking-widest text-muted-foreground">MÚSICA DE FONDO AUTOMÁTICA</label>
         {project.settings.musicUrl ? (
           <div className="flex items-center gap-2 panel rounded-md px-3 py-2">
             <span className="flex-1 text-xs font-mono text-primary-glow truncate">
@@ -1269,22 +1465,198 @@ function SettingsPanel({ project, onChange, beta = false, onOpenScriptManual }: 
               type="file"
               accept="audio/*"
               className="hidden"
-              onChange={async e => {
-                const f = e.target.files?.[0];
-                if (!f) return;
-                const reader = new FileReader();
-                reader.onload = () => {
-                  const url = String(reader.result || "");
-                  if (url) set({ musicUrl: url, musicName: f.name, music: true });
-                };
-                reader.readAsDataURL(f);
+              onChange={e => {
+                handleUploadAudioFiles(e.target.files, "music", true);
                 e.target.value = "";
               }}
             />
             <span className="block text-center py-2.5 rounded-lg bg-primary/10 border border-primary/30 text-primary font-display font-semibold text-xs tracking-widest cursor-pointer hover:bg-primary/15 active:scale-[0.98] transition">
-              ⤒ SUBIR MÚSICA
+              ⤒ SUBIR MÚSICA DE FONDO
             </span>
           </label>
+        )}
+      </div>
+
+      {/* Biblioteca de Sonidos y Música (Assets para Scripts Manuales y Juego) */}
+      <div
+        data-testid="settings-audio-library"
+        className="panel rounded-xl p-3.5 space-y-3 border border-primary/25"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <div className="text-xs font-display font-bold tracking-wider text-primary">
+              ♪ BIBLIOTECA DE SONIDOS Y MÚSICA (ASSETS)
+            </div>
+            <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">
+              Guarda música y efectos en tus assets. Cuando pidas poner música o sonido en Scripts Manuales, el motor los detectará y te preguntará cuál quieres usar.
+            </p>
+          </div>
+          <span className="shrink-0 rounded-md bg-primary/10 border border-primary/30 px-2 py-0.5 text-[10px] font-mono font-semibold text-primary">
+            {audioLibrary.length} {audioLibrary.length === 1 ? "asset" : "assets"}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <input
+              type="file"
+              accept="audio/*"
+              multiple
+              data-testid="upload-music-asset-input"
+              className="hidden"
+              onChange={e => {
+                handleUploadAudioFiles(e.target.files, "music", false);
+                e.target.value = "";
+              }}
+            />
+            <span className="block text-center py-2 px-2 rounded-lg bg-primary/10 border border-primary/35 text-primary font-display font-semibold text-[10px] tracking-widest cursor-pointer hover:bg-primary/15 active:scale-[0.98] transition">
+              + SUBIR MÚSICA (ASSET)
+            </span>
+          </label>
+
+          <label className="block">
+            <input
+              type="file"
+              accept="audio/*"
+              multiple
+              data-testid="upload-sfx-asset-input"
+              className="hidden"
+              onChange={e => {
+                handleUploadAudioFiles(e.target.files, "sfx", false);
+                e.target.value = "";
+              }}
+            />
+            <span className="block text-center py-2 px-2 rounded-lg border border-line-strong bg-card text-ink-2 font-display font-semibold text-[10px] tracking-widest cursor-pointer hover:border-primary/40 hover:text-primary active:scale-[0.98] transition">
+              + SUBIR SONIDO (ASSET)
+            </span>
+          </label>
+        </div>
+
+        {audioLibrary.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-line-strong px-3 py-4 text-center text-[11px] text-muted-foreground">
+            Aún no has guardado música ni sonidos en la biblioteca. Sube tus pistas aquí para usarlas en cualquier lugar desde Scripts Manuales.
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-64 overflow-y-auto pr-0.5">
+            {audioLibrary.map((asset) => {
+              const isPlaying = playingAudioId === asset.id;
+              const isCurrentBg = project.settings.musicUrl === asset.url && project.settings.music;
+              return (
+                <div
+                  key={asset.id}
+                  data-testid={`audio-asset-item-${asset.id}`}
+                  className="flex flex-col gap-1.5 rounded-lg border border-line bg-secondary/40 p-2"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => togglePreviewAudio(asset)}
+                      title={isPlaying ? "Detener vista previa" : "Escuchar vista previa"}
+                      className={`h-7 w-7 shrink-0 rounded-md border font-mono text-xs grid place-items-center transition ${
+                        isPlaying
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-line-strong bg-card text-primary hover:border-primary/50"
+                      }`}
+                    >
+                      {isPlaying ? "■" : "▶"}
+                    </button>
+
+                    <input
+                      type="text"
+                      value={asset.name}
+                      onChange={(e) => {
+                        const nextName = e.target.value;
+                        const nextList = audioLibrary.map((a) =>
+                          a.id === asset.id ? { ...a, name: nextName } : a,
+                        );
+                        const settingsPatch =
+                          project.settings.musicUrl === asset.url
+                            ? { musicName: nextName }
+                            : undefined;
+                        updateAudioLibrary(nextList, settingsPatch);
+                      }}
+                      placeholder="Nombre del audio"
+                      className="flex-1 min-w-0 h-7 rounded-md bg-input border border-line px-2 text-xs font-mono text-foreground focus:border-primary outline-none"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextCat: "music" | "sfx" =
+                          asset.category === "music" ? "sfx" : "music";
+                        const nextList = audioLibrary.map((a) =>
+                          a.id === asset.id ? { ...a, category: nextCat } : a,
+                        );
+                        updateAudioLibrary(nextList);
+                      }}
+                      className={`shrink-0 px-2 h-7 rounded-md border text-[9px] font-display font-semibold tracking-widest transition ${
+                        asset.category === "music"
+                          ? "border-primary/40 bg-primary/10 text-primary"
+                          : "border-line-strong bg-card text-muted-foreground hover:text-foreground"
+                      }`}
+                      title="Cambiar categoría entre Música y Efecto de sonido"
+                    >
+                      {asset.category === "music" ? "MÚSICA" : "SONIDO"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (playingAudioId === asset.id) {
+                          stopCustomSounds();
+                          stopMusic();
+                          setPlayingAudioId(null);
+                        }
+                        const nextList = audioLibrary.filter((a) => a.id !== asset.id);
+                        const settingsPatch =
+                          project.settings.musicUrl === asset.url
+                            ? { musicUrl: null, musicName: null, music: false }
+                            : undefined;
+                        updateAudioLibrary(nextList, settingsPatch);
+                      }}
+                      title="Eliminar de la biblioteca"
+                      className="h-7 w-7 shrink-0 rounded-md border border-destructive/40 bg-destructive/10 text-destructive text-xs grid place-items-center hover:bg-destructive/20 transition"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 pl-1">
+                    <span className="text-[10px] font-mono text-muted-foreground truncate">
+                      Disponible en Scripts Manuales como «{asset.name}»
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isCurrentBg) {
+                          set({ music: false, musicUrl: null, musicName: null });
+                        } else {
+                          set({ music: true, musicUrl: asset.url, musicName: asset.name });
+                        }
+                      }}
+                      className={`shrink-0 px-2 py-0.5 rounded text-[9px] font-display font-semibold tracking-wider border transition ${
+                        isCurrentBg
+                          ? "border-primary bg-primary/15 text-primary"
+                          : "border-line bg-card text-muted-foreground hover:text-primary"
+                      }`}
+                    >
+                      {isCurrentBg ? "✓ EN FONDO" : "USAR DE FONDO"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {onOpenScriptManual && audioLibrary.length > 0 && (
+          <button
+            type="button"
+            onClick={onOpenScriptManual}
+            className="w-full py-2 rounded-lg bg-primary/10 border border-primary/30 text-primary font-display font-semibold text-[10px] tracking-widest hover:bg-primary/15 active:scale-[0.98] transition"
+          >
+            ✦ USAR MÚSICA O SONIDOS EN SCRIPT MANUAL
+          </button>
         )}
       </div>
 
@@ -1292,7 +1664,7 @@ function SettingsPanel({ project, onChange, beta = false, onOpenScriptManual }: 
 
 
 
-      <RuntimeEditorBridgePanel project={project} onChange={onChange} onOpenScriptManual={onOpenScriptManual} />
+      <RuntimeEditorBridgePanel project={project} onChange={onChange} onOpenScriptManual={onOpenScriptManual} onOpenHumanScratch={onOpenHumanScratch} />
 
       <div className="pt-6 text-center text-[10px] font-mono text-muted-foreground">
         ASTERNAL ENGINE · HECHO PARA MÓVIL
@@ -1306,10 +1678,12 @@ function RuntimeEditorBridgePanel({
   project,
   onChange,
   onOpenScriptManual,
+  onOpenHumanScratch,
 }: {
   project: Project;
   onChange: (p: Project) => void;
   onOpenScriptManual?: () => void;
+  onOpenHumanScratch?: () => void;
 }) {
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const [newSoundName, setNewSoundName] = useState("");
@@ -1391,23 +1765,36 @@ function RuntimeEditorBridgePanel({
 
   return (
     <div className="space-y-3 pt-2">
-      <SectionTitle>SCRIPT MANUAL Y SONIDOS · INTELIGENCIA ARTIFICIAL</SectionTitle>
+      <SectionTitle>SCRIPTS DEL JUEGO · IA Y BLOQUES SCRATCH HUMANOS</SectionTitle>
       <div className="panel rounded-xl p-3 space-y-3 border border-primary/30">
         <p className="text-[11px] leading-relaxed text-muted-foreground">
-          Los scripts manuales se crean con inteligencia artificial sin escribir código ni bloques a mano, y quedan conectados con el editor normal.
+          Elige entre <strong>Scripts Manuales</strong> (creados por inteligencia artificial) o <strong>Scripts Humanos</strong> (hechos a mano con los bloques de código de Scratch y variables en pantalla).
         </p>
 
-        {onOpenScriptManual && (
-          <button
-            type="button"
-            onClick={onOpenScriptManual}
-            data-testid="open-settings-script-manual-btn"
-            className="w-full py-2.5 px-3 rounded-lg btn-grad text-primary-foreground font-display font-semibold text-xs tracking-widest active:scale-[0.98] transition flex items-center justify-center gap-1.5"
-          >
-            <Sparkles size={14} />
-            <span>ABRIR SCRIPT MANUAL CON IA</span>
-          </button>
-        )}
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {onOpenScriptManual && (
+            <button
+              type="button"
+              onClick={onOpenScriptManual}
+              data-testid="open-settings-script-manual-btn"
+              className="w-full py-2.5 px-3 rounded-lg btn-grad text-primary-foreground font-display font-semibold text-xs tracking-widest active:scale-[0.98] transition flex items-center justify-center gap-1.5"
+            >
+              <Sparkles size={14} />
+              <span>SCRIPT MANUAL (IA)</span>
+            </button>
+          )}
+          {onOpenHumanScratch && (
+            <button
+              type="button"
+              onClick={onOpenHumanScratch}
+              data-testid="open-settings-human-scratch-btn"
+              className="w-full py-2.5 px-3 rounded-lg bg-amber-500/20 border border-amber-400/50 text-amber-300 font-display font-semibold text-xs tracking-widest hover:bg-amber-500/30 active:scale-[0.98] transition flex items-center justify-center gap-1.5"
+            >
+              <Puzzle size={14} />
+              <span>SCRIPTS HUMANOS (SCRATCH)</span>
+            </button>
+          )}
+        </div>
 
         <button
           type="button"
@@ -1562,7 +1949,7 @@ function HierarchyPanel({
               onClick={() => onSelect(parent.id)}
               className="flex-1 min-w-0 text-left text-[11px] font-display tracking-widest text-primary truncate"
               title="Seleccionar el objeto padre"
-            >↑ {parent.kind.toUpperCase()}</button>
+            >↑ {entityKindLabel(parent)}</button>
             <button
               onClick={() => onChangeScene(detachEntityFromParent(scene, entity.id))}
               className="shrink-0 text-[10px] font-display tracking-widest px-2.5 py-1.5 rounded-lg border border-line-strong bg-card text-ink-2 hover:text-primary hover:border-primary/40 active:scale-95 transition"
@@ -1579,7 +1966,7 @@ function HierarchyPanel({
           >
             <option value="">— ES UN OBJETO RAÍZ —</option>
             {candidates.map(c => (
-              <option key={c.id} value={c.id}>{c.kind.toUpperCase()} · x{c.x} y{c.y}</option>
+              <option key={c.id} value={c.id}>{entityKindLabel(c)} · x{c.x} y{c.y}</option>
             ))}
           </select>
         )}
@@ -1630,12 +2017,17 @@ function HierarchyPanel({
         )}
         {children.map(c => (
           <div key={c.id} className="flex items-center gap-1.5 panel rounded-lg px-2 py-1.5">
-            <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: c.color }} />
+            <img
+              src={c.texture || entityToEditableSvgDataUrl(c)}
+              alt={entityKindLabel(c)}
+              className="w-3.5 h-3.5 object-contain shrink-0"
+              draggable={false}
+            />
             <button
               onClick={() => onSelect(c.id)}
               className="flex-1 min-w-0 text-left text-[10px] font-display tracking-widest truncate hover:text-primary"
               title="Editar este hijo"
-            >{c.kind.toUpperCase()} · {Math.round(c.w)}×{Math.round(c.h)}</button>
+            >{entityKindLabel(c)} · {Math.round(c.w)}×{Math.round(c.h)}</button>
             <button
               onClick={() => onChangeScene(detachEntityFromParent(scene, c.id))}
               title="Desvincular (deja de seguir al padre)"
@@ -1984,7 +2376,7 @@ function TexturesPanel({
       {sprites.length > 0 && (
         <div className="text-[10px] font-mono text-muted-foreground panel rounded-md px-2 py-1.5 border border-border/50">
           {selectedEntity
-            ? <>Toca el <span className="text-primary-glow">lápiz</span> de una textura para seguir editándola, o la textura para asignarla a <span className="text-primary-glow">{selectedEntity.kind.toUpperCase()}</span>.</>
+            ? <>Toca el <span className="text-primary-glow">lápiz</span> de una textura para seguir editándola, o la textura para asignarla a <span className="text-primary-glow">{entityKindLabel(selectedEntity)}</span>.</>
             : <>Toca el <span className="text-primary-glow">lápiz</span> de una textura para seguir editándola cuando quieras. Selecciona un objeto en INSPECCIÓN para asignarle texturas.</>}
         </div>
       )}
@@ -2070,15 +2462,17 @@ function ScriptsButton({
   entity,
   onUpdate,
   onOpenScriptManual,
+  onOpenHumanScratch,
 }: {
   entity: Entity;
   onUpdate: (patch: Partial<Entity>) => void;
   onOpenScriptManual?: () => void;
+  onOpenHumanScratch?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const count = entity.scripts?.length ?? 0;
   return (
-    <>
+    <div className="space-y-1.5 mt-1">
       <button
         type="button"
         onClick={() => {
@@ -2089,26 +2483,42 @@ function ScriptsButton({
           }
         }}
         data-testid="open-entity-script-manual-btn"
-        className="w-full mt-1 px-3 py-2.5 rounded-md bg-primary/10 border border-accent/50 text-primary-glow font-display text-xs tracking-widest flex items-center justify-between glow-border"
+        className="w-full px-3 py-2.5 rounded-md bg-primary/10 border border-accent/50 text-primary-glow font-display text-xs tracking-widest flex items-center justify-between glow-border"
       >
         <span className="inline-flex items-center gap-1.5">
           <Sparkles size={13} className="text-primary" />
-          <span>SCRIPT MANUAL</span>
+          <span>SCRIPT MANUAL · IA</span>
         </span>
-        <span className="font-mono text-[10px] opacity-80">{count} SCRIPT MANUAL</span>
+        <span className="font-mono text-[10px] opacity-80">{count} SCRIPTS</span>
       </button>
+
+      {onOpenHumanScratch && (
+        <button
+          type="button"
+          onClick={onOpenHumanScratch}
+          data-testid="open-entity-human-scratch-btn"
+          className="w-full px-3 py-2.5 rounded-md bg-amber-500/15 border border-amber-400/50 text-amber-300 font-display text-xs tracking-widest flex items-center justify-between hover:bg-amber-500/25 transition"
+        >
+          <span className="inline-flex items-center gap-1.5">
+            <Puzzle size={13} className="text-amber-400" />
+            <span>SCRIPTS HUMANOS · SCRATCH</span>
+          </span>
+          <span className="font-mono text-[10px] opacity-90">{count} BLOQUES</span>
+        </button>
+      )}
+
       {open && (
         <ScriptEditor
           scripts={entity.scripts}
-          ownerLabel={entity.kind.toUpperCase()}
+          ownerLabel={entityKindLabel(entity)}
           aiTargetKind={entity.kind}
-          aiSummary={`Entidad ${entity.kind} en ${entity.x},${entity.y} ${entity.w}x${entity.h}.`}
+          aiSummary={`Entidad ${entityKindLabel(entity)} en ${entity.x},${entity.y} ${entity.w}x${entity.h}.`}
           onOpenFullAiStudio={onOpenScriptManual}
           onChange={onUpdate}
           onClose={() => setOpen(false)}
         />
       )}
-    </>
+    </div>
   );
 }
 
@@ -2670,7 +3080,7 @@ function LayersPanel({
   };
   const remove = (id: string) => {
     const e = scene.entities.find(x => x.id === id);
-    if (!e || isPlayerEntity(e)) return;
+    if (!e || isPlayerEntity(e) || isMainGoalEntity(e)) return;
     // Igual que en el lienzo: un padre se lleva su rama. Deshacible con Ctrl+Z.
     onChangeScene(removeEntityWithChildren(scene, id));
     if (selectedId === id) onSelect(null);
@@ -2705,16 +3115,19 @@ function LayersPanel({
               title="Atrás"
               className="w-5 h-5 grid place-items-center rounded text-muted-foreground hover:text-primary-glow"
             ><ArrowDown size={11} /></button>
-            <span
-              className="w-2.5 h-2.5 rounded-sm shrink-0"
-              style={{ background: e.color, boxShadow: visible ? `0 0 8px ${e.color}` : undefined, opacity: visible ? 1 : 0.3 }}
+            <img
+              src={e.texture || entityToEditableSvgDataUrl(e)}
+              alt={entityKindLabel(e)}
+              className="w-3.5 h-3.5 object-contain shrink-0"
+              style={{ opacity: visible ? 1 : 0.3 }}
+              draggable={false}
             />
             <button
               onClick={() => onSelect(e.id)}
               className="flex-1 flex items-center gap-1.5 text-left min-w-0"
             >
               {depth > 0 && <span className="font-mono text-[9px] text-accent shrink-0">└</span>}
-              <span className="font-display tracking-wider text-[10px] truncate">{e.kind.toUpperCase()}</span>
+              <span className="font-display tracking-wider text-[10px] truncate">{entityKindLabel(e)}</span>
               {e.parentId && <span className="font-mono text-[8px] text-accent/80 shrink-0">hijo</span>}
               <span className="ml-auto font-mono text-[9px] text-muted-foreground shrink-0">z{e.z ?? 0}</span>
             </button>
@@ -2738,7 +3151,7 @@ function LayersPanel({
               title="Mover al fondo"
               className="hidden sm:grid w-6 h-6 place-items-center rounded text-muted-foreground hover:text-primary-glow"
             ><ChevronsDown size={12} /></button>
-            {!isPlayerEntity(e) && (
+            {!isPlayerEntity(e) && !isMainGoalEntity(e) && (
               <button
                 onClick={() => remove(e.id)}
                 title="Borrar"

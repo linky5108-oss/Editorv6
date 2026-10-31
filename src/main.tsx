@@ -4,9 +4,8 @@ import { createRoot } from "react-dom/client";
 import { RouterProvider } from "@tanstack/react-router";
 import { getRouter } from "./router";
 import "./styles.css";
-// Estilo único de cristal (glassmorphism): se importa al final para fijar
-// tokens y componentes sobre las utilidades base.
 import "./glass.css";
+import { DrawablyThemeProvider } from "@/lib/ui/drawably-theme";
 
 // Initialize the router with query client
 // «/index» o «/index.html» no existen: se llevan al inicio real.
@@ -56,6 +55,7 @@ class RootErrorBoundary extends React.Component<
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <RootErrorBoundary>
+      <DrawablyThemeProvider />
       <RouterProvider router={router} />
       <Toaster />
     </RootErrorBoundary>
