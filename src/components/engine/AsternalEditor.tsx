@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Settings, Layers, Copy, X, Eye, EyeOff, Lock, Unlock, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Trash2, Plus, Upload, Home, MousePointer2, Boxes, Eraser, SlidersHorizontal, PanelsTopLeft, Image as ImageIcon, Layers3, Play, LibraryBig, Save, Pencil, Sparkles, Puzzle } from "lucide-react";
+import { Settings, Layers, Copy, X, Eye, EyeOff, Lock, Unlock, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Trash2, Plus, Upload, Home, MousePointer2, Boxes, Eraser, SlidersHorizontal, Image as ImageIcon, Layers3, Play, LibraryBig, Save, Pencil, Sparkles, Code2 } from "lucide-react";
 import { schedulePushToCloud, scheduleAssetLibraryPush, pullAssetLibraryFromCloud, activateCloudProjectIfBlank } from "@/lib/engine/cloud-sync";
 import { supabase } from "@/integrations/supabase/client";
 import { Link, useRouter } from "@tanstack/react-router";
@@ -28,10 +28,8 @@ import {
 } from "@/lib/engine/html5-game";
 import { AnimationEditor } from "./AnimationEditor";
 import { PaintEditor } from "./PaintEditor";
-import { UIEditor } from "./UIEditor";
 import { ProjectManager } from "./ProjectManager";
 import { OrionAiModeScreen } from "./OrionAiModeScreen";
-import { HumanScratchScreen } from "./HumanScratchScreen";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import { ScriptEditor } from "./ScriptEditor";
@@ -44,7 +42,7 @@ import { setNavGuard } from "@/lib/nav-guard";
 type ExitRequest = { kind: "manager" | "home" | "back"; proceed?: () => void };
 
 type Tool = EntityKind | "select" | "erase";
-type Tab = "build" | "inspect" | "ui" | "scenes" | "textures" | "settings";
+type Tab = "build" | "inspect" | "scenes" | "textures" | "settings";
 
 function PresetToolIcon({ kind }: { kind: EntityKind }) {
   const preset = KIND_PRESETS[kind];
@@ -100,9 +98,6 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
   const [playing, setPlaying] = useState(false);
   const [orionModeOpen, setOrionModeOpen] = useState(false);
   const [scriptManualEntityId, setScriptManualEntityId] = useState<string | null>(null);
-  const [humanScratchOpen, setHumanScratchOpen] = useState(false);
-  const [humanScratchEntityId, setHumanScratchEntityId] = useState<string | null>(null);
-  const [humanScratchUiId, setHumanScratchUiId] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [showManager, setShowManager] = useState(false);
@@ -287,46 +282,8 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
 
   const openScriptManual = (entityId?: string | null) => {
     setScriptManualEntityId(entityId ?? selectedId ?? null);
-    setHumanScratchOpen(false);
     setOrionModeOpen(true);
   };
-
-  const openHumanScratch = (entityId?: string | null, uiId?: string | null) => {
-    setHumanScratchEntityId(entityId ?? selectedId ?? null);
-    setHumanScratchUiId(uiId ?? null);
-    setOrionModeOpen(false);
-    setHumanScratchOpen(true);
-  };
-
-  if (humanScratchOpen) {
-    return (
-      <HumanScratchScreen
-        project={project}
-        initialTargetEntityId={humanScratchEntityId}
-        initialTargetUiId={humanScratchUiId}
-        onChangeProject={(nextProject) => {
-          const synced = syncRuntimeAndTexturesToProject(nextProject);
-          setProject(synced);
-          if (projectId) {
-            saveProjectById(projectId, synced);
-            lastSavedRef.current = synced;
-            setDirty(false);
-            setSavedAt(Date.now());
-            schedulePushToCloud(projectId, synced);
-          }
-        }}
-        onSaveProject={saveNow}
-        onSwitchToManualAi={() => {
-          setHumanScratchOpen(false);
-          setOrionModeOpen(true);
-        }}
-        onExit={() => {
-          setProject((prev) => (prev ? syncRuntimeAndTexturesToProject(prev) : prev));
-          setHumanScratchOpen(false);
-        }}
-      />
-    );
-  }
 
   if (orionModeOpen) {
     return (
@@ -345,10 +302,6 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
           }
         }}
         onSaveProject={saveNow}
-        onSwitchToHumanScratch={() => {
-          setOrionModeOpen(false);
-          setHumanScratchOpen(true);
-        }}
         onExit={() => {
           setProject((prev) => (prev ? syncRuntimeAndTexturesToProject(prev) : prev));
           setOrionModeOpen(false);
@@ -359,7 +312,7 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
 
   if (playing) {
     return (
-      <div className="relative h-screen w-full">
+      <div data-no-drawably className="fixed inset-0 z-[100] h-dvh w-full bg-[#0b1e3f] overflow-hidden">
         <GameRuntime
           scene={activeScene}
           scenes={playProject.scenes}
@@ -387,7 +340,6 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
   const TABS: [Tab, string, ReactNode][] = [
     ["build", t("tab.build"), <Boxes size={18} strokeWidth={1.75} key="build" />],
     ["inspect", t("tab.inspect"), <SlidersHorizontal size={18} strokeWidth={1.75} key="inspect" />],
-    ["ui", t("tab.ui"), <PanelsTopLeft size={18} strokeWidth={1.75} key="ui" />],
     ["textures", t("tab.assets"), <ImageIcon size={18} strokeWidth={1.75} key="textures" />],
     ["scenes", t("tab.scenes"), <Layers3 size={18} strokeWidth={1.75} key="scenes" />],
     ["settings", t("tab.settings"), <Settings size={18} strokeWidth={1.75} key="settings" />],
@@ -421,8 +373,8 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
 
     <div className="flex h-full flex-1 flex-col overflow-hidden min-w-0">
       {/* Top bar */}
-      <header className="editor-bar flex flex-wrap items-center justify-between gap-2 py-2 px-3 border-b">
-        <div className="flex min-w-0 items-center gap-2.5">
+      <header className="editor-bar flex flex-nowrap items-center justify-between gap-2 py-2 px-3 border-b">
+        <div className="flex flex-1 min-w-0 items-center gap-2.5">
           {!isTablet && <Logo />}
           <div className="min-w-0">
             <div className="flex items-center gap-2"><span className="truncate font-display text-sm font-semibold text-foreground leading-none">{project.name || "Proyecto sin título"}</span><span className="shrink-0 rounded-md bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-primary">STUDIO</span></div>
@@ -435,10 +387,8 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
           </div>
         </div>
 
-        {/* Botones independientes: la barra superior agrupa navegación, ayuda y
-            las acciones principales. En móvil se envuelve a una segunda fila en
-            lugar de recortar botones. */}
-        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1 sm:gap-1.5">
+        {/* Botones independientes en una sola fila sin partirse en dos líneas */}
+        <div className="ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-1 sm:gap-1.5">
           <Link
             to="/"
             aria-label="Ir al inicio"
@@ -557,7 +507,6 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
             onOpenLibrary={() => setLibraryOpen(true)}
             project={project}
             onOpenScriptManual={openScriptManual}
-            onOpenHumanScratch={(entId) => openHumanScratch(entId, null)}
             onRegisterTexture={(dataUrl, name, w, h) => {
               setProject((prev) =>
                 prev
@@ -567,14 +516,6 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
                   : prev,
               );
             }}
-          />
-        )}
-
-        {tab === "ui" && (
-          <UIEditor
-            scene={activeScene}
-            onChange={updateScene}
-            onOpenHumanScratch={(uiId) => openHumanScratch(null, uiId)}
           />
         )}
 
@@ -646,7 +587,6 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
             onChange={setProject}
             beta={beta}
             onOpenScriptManual={() => openScriptManual(null)}
-            onOpenHumanScratch={() => openHumanScratch(null, null)}
           />
         )}
 
@@ -732,7 +672,7 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
 
       {/* Bottom tabs (mobile only) */}
       {!isTablet && (
-      <nav className="editor-bar grid grid-cols-6 border-t pb-[env(safe-area-inset-bottom)]">
+      <nav className="editor-bar grid grid-cols-5 border-t pb-[env(safe-area-inset-bottom)]">
         {TABS.map(([id, label, icon]) => (
           <button
             key={id}
@@ -862,7 +802,6 @@ function InspectorPanel({
   onOpenLibrary,
   project,
   onOpenScriptManual,
-  onOpenHumanScratch,
   onRegisterTexture,
 }: {
   scene: import("@/lib/engine/core").Scene;
@@ -873,7 +812,6 @@ function InspectorPanel({
   onOpenLibrary: () => void;
   project?: Project;
   onOpenScriptManual?: (entityId?: string | null) => void;
-  onOpenHumanScratch?: (entityId?: string | null) => void;
   onRegisterTexture?: (dataUrl: string, name: string, w: number, h: number) => void;
 }) {
   const t = useT();
@@ -883,33 +821,18 @@ function InspectorPanel({
     const totalSceneScripts = scene.entities.reduce((acc, e) => acc + (e.scripts?.length ?? 0), 0);
     return (
       <div className="h-full overflow-auto p-4 space-y-3">
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <button
-            type="button"
-            onClick={() => onOpenScriptManual?.(null)}
-            data-testid="open-scene-script-manual-btn"
-            className="w-full px-3 py-2.5 rounded-md bg-primary/10 border border-accent/50 text-primary-glow font-display text-xs tracking-widest flex items-center justify-between glow-border"
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <Sparkles size={14} className="text-primary" />
-              <span>SCRIPT MANUAL · IA</span>
-            </span>
-            <span className="font-mono text-[10px] opacity-80">{totalSceneScripts}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onOpenHumanScratch?.(null)}
-            data-testid="open-scene-human-scratch-btn"
-            className="w-full px-3 py-2.5 rounded-md bg-amber-500/15 border border-amber-400/50 text-amber-300 font-display text-xs tracking-widest flex items-center justify-between hover:bg-amber-500/25 transition"
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <Puzzle size={14} className="text-amber-400" />
-              <span>SCRIPTS HUMANOS · SCRATCH</span>
-            </span>
-            <span className="font-mono text-[10px] opacity-90">{totalSceneScripts}</span>
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => onOpenScriptManual?.(null)}
+          data-testid="open-scene-script-manual-btn"
+          className="w-full px-3 py-2.5 rounded-md bg-primary/10 border border-accent/50 text-primary-glow font-display text-xs tracking-widest flex items-center justify-between glow-border"
+        >
+          <span className="inline-flex items-center gap-1.5">
+            <Code2 size={14} className="text-primary" />
+            <span>SCRIPT MANUAL</span>
+          </span>
+          <span className="font-mono text-[10px] opacity-80">{totalSceneScripts}</span>
+        </button>
 
         <SectionTitle>{t("scene.props")}</SectionTitle>
         <Field label={t("settings.gameName")} value={scene.name} onChange={v => onChangeScene({ ...scene, name: v })} />
@@ -1051,7 +974,6 @@ function InspectorPanel({
         entity={ent}
         onUpdate={update}
         onOpenScriptManual={() => onOpenScriptManual?.(ent.id)}
-        onOpenHumanScratch={() => onOpenHumanScratch?.(ent.id)}
       />
       <DialogEditor entity={ent} onUpdate={update} />
       <HitboxEditor entity={ent} onUpdate={update} />
@@ -1269,7 +1191,7 @@ function ScenesPanel({
 }
 
 
-function SettingsPanel({ project, onChange, beta = false, onOpenScriptManual, onOpenHumanScratch }: { project: Project; onChange: (p: Project) => void; beta?: boolean; onOpenScriptManual?: () => void; onOpenHumanScratch?: () => void }) {
+function SettingsPanel({ project, onChange, beta = false, onOpenScriptManual }: { project: Project; onChange: (p: Project) => void; beta?: boolean; onOpenScriptManual?: () => void }) {
   useT();
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const audioLibrary = useMemo(() => getProjectAudioLibrary(project), [project]);
@@ -1485,14 +1407,14 @@ function SettingsPanel({ project, onChange, beta = false, onOpenScriptManual, on
         <div className="flex items-center justify-between gap-2">
           <div>
             <div className="text-xs font-display font-bold tracking-wider text-primary">
-              ♪ BIBLIOTECA DE SONIDOS Y MÚSICA (ASSETS)
+              ♪ BIBLIOTECA DE SONIDOS Y MÚSICA
             </div>
             <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">
-              Guarda música y efectos en tus assets. Cuando pidas poner música o sonido en Scripts Manuales, el motor los detectará y te preguntará cuál quieres usar.
+              Guarda música y efectos en tu biblioteca. Cuando pidas poner música o sonido en Scripts Manuales, el motor los detectará y te preguntará cuál quieres usar.
             </p>
           </div>
           <span className="shrink-0 rounded-md bg-primary/10 border border-primary/30 px-2 py-0.5 text-[10px] font-mono font-semibold text-primary">
-            {audioLibrary.length} {audioLibrary.length === 1 ? "asset" : "assets"}
+            {audioLibrary.length} {audioLibrary.length === 1 ? "pista" : "pistas"}
           </span>
         </div>
 
@@ -1510,7 +1432,7 @@ function SettingsPanel({ project, onChange, beta = false, onOpenScriptManual, on
               }}
             />
             <span className="block text-center py-2 px-2 rounded-lg bg-primary/10 border border-primary/35 text-primary font-display font-semibold text-[10px] tracking-widest cursor-pointer hover:bg-primary/15 active:scale-[0.98] transition">
-              + SUBIR MÚSICA (ASSET)
+              + SUBIR MÚSICA
             </span>
           </label>
 
@@ -1527,7 +1449,7 @@ function SettingsPanel({ project, onChange, beta = false, onOpenScriptManual, on
               }}
             />
             <span className="block text-center py-2 px-2 rounded-lg border border-line-strong bg-card text-ink-2 font-display font-semibold text-[10px] tracking-widest cursor-pointer hover:border-primary/40 hover:text-primary active:scale-[0.98] transition">
-              + SUBIR SONIDO (ASSET)
+              + SUBIR SONIDO
             </span>
           </label>
         </div>
@@ -1664,7 +1586,7 @@ function SettingsPanel({ project, onChange, beta = false, onOpenScriptManual, on
 
 
 
-      <RuntimeEditorBridgePanel project={project} onChange={onChange} onOpenScriptManual={onOpenScriptManual} onOpenHumanScratch={onOpenHumanScratch} />
+      <RuntimeEditorBridgePanel project={project} onChange={onChange} onOpenScriptManual={onOpenScriptManual} />
 
       <div className="pt-6 text-center text-[10px] font-mono text-muted-foreground">
         ASTERNAL ENGINE · HECHO PARA MÓVIL
@@ -1678,12 +1600,10 @@ function RuntimeEditorBridgePanel({
   project,
   onChange,
   onOpenScriptManual,
-  onOpenHumanScratch,
 }: {
   project: Project;
   onChange: (p: Project) => void;
   onOpenScriptManual?: () => void;
-  onOpenHumanScratch?: () => void;
 }) {
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const [newSoundName, setNewSoundName] = useState("");
@@ -1765,36 +1685,23 @@ function RuntimeEditorBridgePanel({
 
   return (
     <div className="space-y-3 pt-2">
-      <SectionTitle>SCRIPTS DEL JUEGO · IA Y BLOQUES SCRATCH HUMANOS</SectionTitle>
+      <SectionTitle>SCRIPTS E INTERFAZ DEL JUEGO</SectionTitle>
       <div className="panel rounded-xl p-3 space-y-3 border border-primary/30">
         <p className="text-[11px] leading-relaxed text-muted-foreground">
-          Elige entre <strong>Scripts Manuales</strong> (creados por inteligencia artificial) o <strong>Scripts Humanos</strong> (hechos a mano con los bloques de código de Scratch y variables en pantalla).
+          Gestiona toda la lógica, comportamientos e interfaz del juego desde el panel de <strong>Scripts</strong>.
         </p>
 
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {onOpenScriptManual && (
-            <button
-              type="button"
-              onClick={onOpenScriptManual}
-              data-testid="open-settings-script-manual-btn"
-              className="w-full py-2.5 px-3 rounded-lg btn-grad text-primary-foreground font-display font-semibold text-xs tracking-widest active:scale-[0.98] transition flex items-center justify-center gap-1.5"
-            >
-              <Sparkles size={14} />
-              <span>SCRIPT MANUAL (IA)</span>
-            </button>
-          )}
-          {onOpenHumanScratch && (
-            <button
-              type="button"
-              onClick={onOpenHumanScratch}
-              data-testid="open-settings-human-scratch-btn"
-              className="w-full py-2.5 px-3 rounded-lg bg-amber-500/20 border border-amber-400/50 text-amber-300 font-display font-semibold text-xs tracking-widest hover:bg-amber-500/30 active:scale-[0.98] transition flex items-center justify-center gap-1.5"
-            >
-              <Puzzle size={14} />
-              <span>SCRIPTS HUMANOS (SCRATCH)</span>
-            </button>
-          )}
-        </div>
+        {onOpenScriptManual && (
+          <button
+            type="button"
+            onClick={onOpenScriptManual}
+            data-testid="open-settings-script-manual-btn"
+            className="w-full py-2.5 px-3 rounded-lg btn-grad text-primary-foreground font-display font-semibold text-xs tracking-widest active:scale-[0.98] transition flex items-center justify-center gap-1.5"
+          >
+            <Code2 size={14} />
+            <span>ABRIR SCRIPTS</span>
+          </button>
+        )}
 
         <button
           type="button"
@@ -2462,12 +2369,10 @@ function ScriptsButton({
   entity,
   onUpdate,
   onOpenScriptManual,
-  onOpenHumanScratch,
 }: {
   entity: Entity;
   onUpdate: (patch: Partial<Entity>) => void;
   onOpenScriptManual?: () => void;
-  onOpenHumanScratch?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const count = entity.scripts?.length ?? 0;
@@ -2486,35 +2391,20 @@ function ScriptsButton({
         className="w-full px-3 py-2.5 rounded-md bg-primary/10 border border-accent/50 text-primary-glow font-display text-xs tracking-widest flex items-center justify-between glow-border"
       >
         <span className="inline-flex items-center gap-1.5">
-          <Sparkles size={13} className="text-primary" />
-          <span>SCRIPT MANUAL · IA</span>
+          <Code2 size={13} className="text-primary" />
+          <span>SCRIPT MANUAL</span>
         </span>
         <span className="font-mono text-[10px] opacity-80">{count} SCRIPTS</span>
       </button>
 
-      {onOpenHumanScratch && (
-        <button
-          type="button"
-          onClick={onOpenHumanScratch}
-          data-testid="open-entity-human-scratch-btn"
-          className="w-full px-3 py-2.5 rounded-md bg-amber-500/15 border border-amber-400/50 text-amber-300 font-display text-xs tracking-widest flex items-center justify-between hover:bg-amber-500/25 transition"
-        >
-          <span className="inline-flex items-center gap-1.5">
-            <Puzzle size={13} className="text-amber-400" />
-            <span>SCRIPTS HUMANOS · SCRATCH</span>
-          </span>
-          <span className="font-mono text-[10px] opacity-90">{count} BLOQUES</span>
-        </button>
-      )}
-
       {open && (
         <ScriptEditor
-          scripts={entity.scripts}
+          scripts={entity.scripts ?? []}
           ownerLabel={entityKindLabel(entity)}
           aiTargetKind={entity.kind}
           aiSummary={`Entidad ${entityKindLabel(entity)} en ${entity.x},${entity.y} ${entity.w}x${entity.h}.`}
           onOpenFullAiStudio={onOpenScriptManual}
-          onChange={onUpdate}
+          onChange={(nextScripts) => onUpdate({ scripts: nextScripts })}
           onClose={() => setOpen(false)}
         />
       )}

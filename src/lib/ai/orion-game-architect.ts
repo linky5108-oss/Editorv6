@@ -17,6 +17,14 @@ import {
 } from "@/lib/engine/html5-game";
 import { getProjectAudioLibrary } from "@/lib/engine/audio-library";
 import { normalizeScripts, type Script } from "@/lib/engine/scripts";
+import {
+  buildUserLanguagePromptContext,
+  compileUserLanguageLocally,
+  loadUserLanguage,
+  mergeCompiledProgramsIntoRuntimeJs,
+  saveUserLanguageToStorage,
+  type CustomLanguageProgram,
+} from "./custom-language";
 import { ENGINE_KNOWLEDGE } from "./engine-knowledge";
 import { geminiChat, parseAiJson } from "./gemini-provider";
 
@@ -215,10 +223,11 @@ export function buildOrionArchitectPrompt(
   project: Project,
   recentHistoryText?: string,
 ): string {
+  const userLang = loadUserLanguage(project);
   return [
-    "Eres Orión (SIEMPRE escrito con tilde: Orión), el asistente de inteligencia artificial oficial de Asternal.",
-    "Tu misión es MODIFICAR REALMENTE el juego cumpliendo exactamente la petición del creador. Puedes modificar escenas, colores, gravedad, entidades (jugador, plataformas, enemigos, monedas, meta, decoración), scripts de bloques, interfaz UI, sonidos sintetizados WebAudio y programar cualquier mecánica nueva en JavaScript dentro del runtime HTML5 (`window.AsternalRuntime.registerHook` y `window.AsternalAudio`).",
-    "REGLAS ESTRICTAS DE EDICIÓN:",
+    "Eres Orión (SIEMPRE escrito con tilde: Orión), el asistente y traductor de lenguaje de programación mediante inteligencia artificial de Asternal.",
+    "Tu misión es MODIFICAR REALMENTE el juego y TRADUCIR el lenguaje de programación inventado por el usuario en código JavaScript/HTML5 funcional y bloques del motor. Puedes modificar escenas, colores, gravedad, entidades (jugador, plataformas, enemigos, monedas, meta, decoración), scripts de bloques, interfaz UI, sonidos sintetizados WebAudio y programar cualquier mecánica nueva en JavaScript dentro del runtime HTML5 (`window.AsternalRuntime.registerHook` y `window.AsternalAudio`).",
+    "REGLAS ESTRICTAS DE EDICIÓN Y TRADUCCIÓN DE LENGUAJE PROPIO:",
     "1. NUNCA respondas solo con texto: SIEMPRE debes incluir los cambios reales en los campos JSON (`scenePatch`, `entitiesToAdd`, `entityUpdates`, `entityIdsToRemove`, `kindsToRemove`, `replaceAllEntities`, `uiToAdd`, `redistributeLayout`, `synthSounds` o `customRuntimeJs`) para que el juego cambie de verdad.",
     "2. En la escena activa, y=0 es la parte superior y y=height (normalmente 700) es el fondo. El suelo suele estar en y=500..640.",
     "3. Para cambiar tamaño, color, posición, velocidad o propiedades de objetos existentes (como el jugador, plataformas, enemigos o monedas), usa `entityUpdates`: [{ \"targetKind\": \"player\", \"patch\": { \"w\": 64, \"h\": 84, \"color\": \"#ef4444\" } }] o indica el `id` exacto del objeto.",
@@ -226,16 +235,18 @@ export function buildOrionArchitectPrompt(
     "5. Si el usuario pide crear un nivel nuevo desde cero o rehacer todo el mapa, pon `\"replaceAllEntities\": true` y define en `entitiesToAdd` el jugador (`kind: \"player\"`), las plataformas de suelo y aéreas (`kind: \"platform\"`), enemigos (`kind: \"enemy\"`), monedas (`kind: \"coin\"`) y la meta (`kind: \"goal\"`).",
     "6. CONEXIÓN OBLIGATORIA CON EL EDITOR NORMAL Y RESPETO A LOS ASSETS PREDETERMINADOS DEL MOTOR: TODO lo que agregues o modifiques DEBE quedar conectado con el editor normal para que el usuario pueda seguir editándolo visualmente. Las entidades nuevas o editadas deben ir en `entitiesToAdd` o `entityUpdates` usando los assets predeterminados del motor (`KIND_PRESETS` con `texture: null` por defecto para que el editor y el runtime muestren exactamente los mismos gráficos predeterminados del motor, salvo que el usuario pida expresamente dibujar o cambiar una textura personalizada, en cuyo caso usa `texture` y `spritesToAdd`). No inventes botones duplicados de control táctil (`ui_btn_left`, `ui_btn_right`, `ui_btn_jump`, `ui_btn_restart`) en `uiToAdd` porque el motor ya incluye sus controles táctiles predeterminados (`touchControls: true`); usa `uiToAdd`/`uiUpdates` solo cuando el usuario pida elementos de interfaz personalizados, y los sonidos en `synthSounds`.",
     "7. Para nuevas mecánicas de juego, controles por teclado, proyectiles, poderes, física personalizada, lluvia/estrellas en canvas o lógica avanzada, escribe código JavaScript válido y completo en `customRuntimeJs` usando `window.AsternalRuntime.registerHook({ onInit(api), onTick(api, dt), onCollide(a, b, api), onRender(ctx, api), onRenderBackground(ctx, api, W, H), onRenderOverlay(ctx, api, W, H), onKeyDown(code, key, api), onKeyUp(code, key, api) })`, operando sobre las entidades reales de la escena para que sigan siendo editables en el editor normal.",
+    "8. TRADUCTOR DE LENGUAJE PROPIO DEL USUARIO: Cuando el usuario escriba instrucciones en su propio lenguaje inventado (por ejemplo: `SI el jugador pierde:\\nMOSTRAR sonido en el mapa`), comprende su intención usando el diccionario y las reglas de su lenguaje, genera el código JavaScript/HTML5 ejecutable en `customRuntimeJs` y añade también los `scriptsToAdd` equivalentes en `entityUpdates` (por ejemplo sobre `targetKind: \"player\"`).",
+    buildUserLanguagePromptContext(userLang, userInstruction),
     "Conocimiento del motor Asternal:",
     ENGINE_KNOWLEDGE,
     "Estado actual del proyecto:",
     summarizeProjectForOrionArchitect(project),
     recentHistoryText ? `Contexto reciente de la conversación:\n${recentHistoryText}` : "",
-    "Instrucción actual del creador para Orión:",
+    "Instrucción o código actual del creador para Orión:",
     userInstruction,
     `Devuelve ÚNICAMENTE un objeto JSON válido (sin texto fuera del JSON y sin bloques markdown):
 {
-  "reply": "Explicación en primera persona como Orión (con tilde) detallando los cambios reales aplicados y conectados con el editor.",
+  "reply": "Explicación en primera persona como Orión (con tilde) detallando cómo tradujiste su lenguaje/instrucción a código JavaScript/HTML5 y bloques del motor.",
   "changesSummary": ["Cambio real 1", "Cambio real 2"],
   "projectTitle": "",
   "scenePatch": {},
@@ -868,8 +879,32 @@ export function buildOrionIntelligentPatch(instruction: string, project: Project
     changesSummary.push("Nuevo enemigo añadido a la escena");
   }
 
+  const looksLikeUserLanguage =
+    /^(si|cuando|al|cada|if|when|on)\b/im.test(instruction.trim()) ||
+    instruction.includes(":") ||
+    instruction.includes("\n") ||
+    /mostrar\s+sonido.*mapa/i.test(text);
+
+  if (looksLikeUserLanguage || changesSummary.length === 0) {
+    const userLang = loadUserLanguage(project);
+    const compiled = compileUserLanguageLocally(instruction, userLang);
+    if (compiled.compiledJs) {
+      jsSnippets.push(compiled.compiledJs);
+    }
+    Object.assign(synthSounds, compiled.synthSounds);
+    if (compiled.compiledScripts.length > 0) {
+      entityUpdates.push({
+        targetKind: "player",
+        scriptsToAdd: compiled.compiledScripts,
+      });
+    }
+    changesSummary.push(
+      `Lenguaje "${userLang.name}" traducido a JavaScript/HTML5 y ${compiled.compiledScripts.length} script(s) ejecutable(s): ${compiled.explanation}`
+    );
+  }
+
   return {
-    reply: `Soy Orión. He actualizado el archivo HTML5 de tu juego aplicando: ${changesSummary.join("; ") || "edición en el runtime HTML5"}.`,
+    reply: `Soy Orión. He traducido tu instrucción y actualizado el archivo HTML5 de tu juego aplicando: ${changesSummary.join("; ") || "edición en el runtime HTML5"}.`,
     changesSummary,
     scenePatch: Object.keys(scenePatch).length > 0 ? scenePatch : undefined,
     settingsPatch: Object.keys(settingsPatch).length > 0 ? settingsPatch : undefined,
@@ -883,10 +918,10 @@ export function buildOrionIntelligentPatch(instruction: string, project: Project
 }
 
 /**
- * Ejecuta una petición de edición de juego con la Inteligencia Artificial real de Orión:
+ * Ejecuta una petición de edición de juego o traducción del lenguaje propio del usuario con la IA de Orión:
  * 1. Consulta el endpoint del servidor `/api/orion/edit-game` (respaldado por `@google/genai` Gemini 3.8 Flash).
  * 2. Si el servidor no está accesible en el entorno actual, consulta directamente el servicio Gemini (`geminiChat`) con una sesión limpia.
- * 3. Aplica el parche devuelto por la IA sobre las escenas, entidades, scripts, sonidos y runtime HTML5 del proyecto.
+ * 3. Si el usuario escribió en su propio lenguaje de programación, compila y fusiona el código JavaScript/HTML5 y bloques equivalentes.
  */
 export async function runOrionGameEdit(args: {
   instruction: string;
@@ -897,7 +932,7 @@ export async function runOrionGameEdit(args: {
   const { instruction, signal } = args;
   const trimmed = instruction.trim();
   if (!trimmed) {
-    throw new Error("Escribe una instrucción para que Orión edite el juego.");
+    throw new Error("Escribe una instrucción o código en tu lenguaje para que Orión lo traduzca y aplique.");
   }
 
   // Si el usuario editó antes el HTML manualmente, partimos del proyecto sincronizado
@@ -909,6 +944,9 @@ export async function runOrionGameEdit(args: {
       /* conserva workingProject */
     }
   }
+
+  const userLang = loadUserLanguage(workingProject);
+  const promptWithLanguageContext = `${trimmed}\n\n${buildUserLanguagePromptContext(userLang, trimmed)}`;
 
   const recentHistoryText = (workingProject.customRuntime?.orionHistory ?? [])
     .slice(-6)
@@ -925,7 +963,7 @@ export async function runOrionGameEdit(args: {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        instruction: trimmed,
+        instruction: promptWithLanguageContext,
         projectSummary: summarizeProjectForOrionArchitect(workingProject),
         recentHistory: recentHistoryText,
       }),
@@ -966,12 +1004,45 @@ export async function runOrionGameEdit(args: {
     }
   }
 
+  // 3) Si el proveedor externo falló pero el usuario escribió una instrucción o programa en su lenguaje,
+  // aplicamos el compilador inteligente de lenguaje propio para garantizar traducción a JS/HTML5 funcional.
   if (!aiPatch) {
-    throw lastError ?? new Error("No se pudo conectar con la inteligencia artificial de Orión. Inténtalo de nuevo.");
+    aiPatch = buildOrionIntelligentPatch(trimmed, workingProject);
+    modelUsed = `Orión · Traductor ${userLang.name}`;
   }
 
-  // Si la IA pidió además patrones complementarios (como sonidos o redistribución) pero dejó vacío algún detalle técnico,
-  // respetamos íntegramente lo que decidió la IA en `aiPatch`.
+  const isCustomLanguageInput =
+    /^(si|cuando|al|cada|if|when|on)\b/im.test(trimmed) ||
+    trimmed.includes(":") ||
+    trimmed.includes("\n") ||
+    /mostrar\s+sonido.*mapa/i.test(trimmed);
+
+  const compiledLocal = isCustomLanguageInput
+    ? compileUserLanguageLocally(trimmed, userLang)
+    : null;
+
+  if (compiledLocal) {
+    if (!aiPatch.customRuntimeJs || !aiPatch.customRuntimeJs.trim()) {
+      aiPatch.customRuntimeJs = compiledLocal.compiledJs;
+    }
+    aiPatch.synthSounds = {
+      ...(compiledLocal.synthSounds ?? {}),
+      ...(aiPatch.synthSounds ?? {}),
+    };
+    const hasEntityScripts = (aiPatch.entityUpdates ?? []).some(
+      (u) => Array.isArray(u.scriptsToAdd) && u.scriptsToAdd.length > 0
+    );
+    if (!hasEntityScripts && compiledLocal.compiledScripts.length > 0) {
+      aiPatch.entityUpdates = [
+        ...(aiPatch.entityUpdates ?? []),
+        {
+          targetKind: "player",
+          scriptsToAdd: compiledLocal.compiledScripts,
+        },
+      ];
+    }
+  }
+
   const updatedProject = applyOrionPatchToProject(workingProject, aiPatch);
 
   const rawReply = typeof aiPatch.reply === "string" ? aiPatch.reply.trim() : "";
@@ -979,12 +1050,12 @@ export async function runOrionGameEdit(args: {
     ? rawReply.includes("Orión")
       ? rawReply
       : `Soy Orión. ${rawReply}`
-    : "Soy Orión. He aplicado las modificaciones directamente en tu juego y en su archivo HTML5.";
+    : "Soy Orión. He traducido tus instrucciones a código JavaScript/HTML5 y las he aplicado a tu juego.";
 
   const summaryList =
     Array.isArray(aiPatch.changesSummary) && aiPatch.changesSummary.length > 0
       ? aiPatch.changesSummary.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
-      : ["Juego y documento HTML5 actualizados por Orión"];
+      : ["Lenguaje traducido a JavaScript/HTML5 y bloques del motor por Orión"];
 
   const userMsg: OrionHistoryItem = {
     id: uid(),
@@ -1000,12 +1071,45 @@ export async function runOrionGameEdit(args: {
     createdAt: Date.now() + 1,
   };
 
+  let nextUserLanguage = loadUserLanguage(updatedProject);
+  if (compiledLocal) {
+    const newProgram: CustomLanguageProgram = {
+      id: compiledLocal.programId,
+      title: compiledLocal.title,
+      sourceCode: trimmed,
+      compiledJs: aiPatch.customRuntimeJs?.trim() || compiledLocal.compiledJs,
+      compiledScripts: compiledLocal.compiledScripts,
+      explanation: compiledLocal.explanation,
+      targetEntityId: null,
+      updatedAt: Date.now(),
+    };
+    const mergedDict = [
+      ...nextUserLanguage.dictionary,
+      ...compiledLocal.detectedKeywords.filter(
+        (kw) => !nextUserLanguage.dictionary.some((d) => d.keyword.toLowerCase() === kw.keyword.toLowerCase())
+      ),
+    ];
+    nextUserLanguage = {
+      ...nextUserLanguage,
+      dictionary: mergedDict,
+      programs: [newProgram, ...nextUserLanguage.programs.filter((p) => p.sourceCode.trim() !== trimmed)].slice(0, 30),
+    };
+    saveUserLanguageToStorage(nextUserLanguage);
+  }
+
   const prevHistory = updatedProject.customRuntime?.orionHistory ?? [];
+  const mergedJsWithPrograms = mergeCompiledProgramsIntoRuntimeJs(
+    updatedProject.customRuntime?.jsCode,
+    nextUserLanguage.programs
+  );
+
   const finalProject: Project = {
     ...updatedProject,
     customRuntime: {
       ...(updatedProject.customRuntime ?? {}),
+      jsCode: mergedJsWithPrograms,
       orionHistory: [...prevHistory, userMsg, assistantMsg].slice(-40),
+      userLanguage: nextUserLanguage,
     },
   };
 

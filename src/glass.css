@@ -1,11 +1,13 @@
 /* ============================================================================
    ASTERNAL · DRAWABLY HAND-DRAWN SYSTEM (https://www.drawably.dev/)
    ─────────────────────────────────────────────────────────────────
-   Transforma toda la aplicación a un estilo dibujado a mano con lápiz de
-   grafito y bolígrafo de tinta sobre papel de cuaderno (#e3e3e1), utilizando
-   la tipografía "Drawably Pen", la paleta oficial de drawably.dev, textura de
-   papel fractalNoise, bordes trazados a mano con pulso firme (sin temblor)
-   e iconos con doble pasada limpia a lápiz.
+   Transforma toda la aplicación al estilo dibujado a mano de drawably.dev:
+   - Papel cálido (#e3e3e1) con textura fractalNoise y cuadrícula de boceto.
+   - Tinta grafito (#18181b, #474645, #71717a) y azul bolígrafo (#2724d1).
+   - Tipografía oficial "Drawably Pen" + "Geist Mono".
+   - Bordes y rellenos SVG de doble pasada dibujados a mano (sin bordes CSS
+     rectangulares superpuestos y sin vibración).
+   - Iconos con filtro SVG de doble trazo a lápiz/bolígrafo.
    ========================================================================== */
 
 /* ─── Tokens · Papel claro (extraídos de https://www.drawably.dev/) ──────── */
@@ -29,10 +31,10 @@
   --m3-outline: rgba(24, 24, 27, 0.55);
   --m3-outline-variant: rgba(24, 24, 27, 0.28);
 
-  /* Sombras de trazo a lápiz (desplazadas limpias, sin blur sintético) */
-  --m3-elev-1: 2px 2px 0 0 rgba(24, 24, 27, 0.14);
-  --m3-elev-2: 3px 3px 0 0 rgba(24, 24, 27, 0.18);
-  --m3-elev-3: 4px 4px 0 0 rgba(24, 24, 27, 0.22);
+  /* Sombras de trazo a lápiz */
+  --m3-elev-1: 2px 2.5px 0 0 rgba(24, 24, 27, 0.16);
+  --m3-elev-2: 3px 3.5px 0 0 rgba(24, 24, 27, 0.20);
+  --m3-elev-3: 4px 4.5px 0 0 rgba(24, 24, 27, 0.24);
 
   --canvas: #e3e3e1;
   --background: #e3e3e1;
@@ -81,7 +83,7 @@
   --shadow-float: var(--m3-elev-3);
   --shadow-glow: 2.5px 2.5px 0 0 rgba(39, 36, 209, 0.26);
 
-  /* Superficies de papel en lugar de cristal (sin backdrop-filter para no atrapar fixed) */
+  /* Superficies de papel en lugar de cristal (sin backdrop-filter para respetar <RULE[AGENTS_md]>) */
   --glass-fill: #ebeae6;
   --glass-fill-strong: #efeeea;
   --glass-fill-soft: #e0dfdb;
@@ -135,9 +137,9 @@
   --m3-outline: rgba(231, 229, 224, 0.52);
   --m3-outline-variant: rgba(231, 229, 224, 0.24);
 
-  --m3-elev-1: 2px 2px 0 0 rgba(0, 0, 0, 0.5);
-  --m3-elev-2: 3px 3px 0 0 rgba(0, 0, 0, 0.6);
-  --m3-elev-3: 4px 4px 0 0 rgba(0, 0, 0, 0.7);
+  --m3-elev-1: 2px 2.5px 0 0 rgba(0, 0, 0, 0.55);
+  --m3-elev-2: 3px 3.5px 0 0 rgba(0, 0, 0, 0.65);
+  --m3-elev-3: 4px 4.5px 0 0 rgba(0, 0, 0, 0.75);
 
   --canvas: #1c1b1a;
   --background: #1c1b1a;
@@ -201,9 +203,9 @@
 body {
   background-color: var(--paper) !important;
   background-image:
-    radial-gradient(rgba(24, 24, 27, 0.075) 1px, transparent 0),
-    linear-gradient(to right, rgba(24, 24, 27, 0.028) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(24, 24, 27, 0.028) 1px, transparent 1px) !important;
+    radial-gradient(rgba(24, 24, 27, 0.085) 1px, transparent 0),
+    linear-gradient(to right, rgba(24, 24, 27, 0.032) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(24, 24, 27, 0.032) 1px, transparent 1px) !important;
   background-size: 20px 20px, 40px 40px, 40px 40px !important;
   background-attachment: scroll !important;
   color: var(--ink);
@@ -212,20 +214,9 @@ body {
 
 .dark body {
   background-image:
-    radial-gradient(rgba(231, 229, 224, 0.065) 1px, transparent 0),
-    linear-gradient(to right, rgba(231, 229, 224, 0.022) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(231, 229, 224, 0.022) 1px, transparent 1px) !important;
-}
-
-/* Filtro de textura de papel exacto extraído de https://www.drawably.dev/ */
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 9998;
-  opacity: 0.042;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    radial-gradient(rgba(231, 229, 224, 0.07) 1px, transparent 0),
+    linear-gradient(to right, rgba(231, 229, 224, 0.025) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(231, 229, 224, 0.025) 1px, transparent 1px) !important;
 }
 
 /* Tipografía dibujada a mano global */
@@ -240,92 +231,53 @@ code, pre, kbd, .font-mono, .section-label {
   font-family: "Geist Mono", "JetBrains Mono", ui-monospace, monospace !important;
 }
 
-/* ─── Iconos dibujados a mano con pulso firme en toda la aplicación ──────── */
-svg.lucide,
-button svg:not(.drawably-svg),
-a svg:not(.drawably-svg),
-nav svg:not(.drawably-svg),
-header svg:not(.drawably-svg),
-[role="tab"] svg:not(.drawably-svg),
-[role="menuitem"] svg:not(.drawably-svg),
-.section-label svg:not(.drawably-svg) {
+/* ─── Iconos dibujados a mano SOLO en la interfaz (nunca en objetos principales del juego) ─ */
+svg.lucide:not([data-no-drawably] *),
+button svg:not(.drawably-svg):not([data-no-drawably] *),
+a svg:not(.drawably-svg):not([data-no-drawably] *),
+nav svg:not(.drawably-svg):not([data-no-drawably] *),
+header svg:not(.drawably-svg):not([data-no-drawably] *),
+[role="tab"] svg:not(.drawably-svg):not([data-no-drawably] *),
+[role="menuitem"] svg:not(.drawably-svg):not([data-no-drawably] *),
+.section-label svg:not(.drawably-svg):not([data-no-drawably] *) {
   filter: url(#drawably-pencil-icon);
   stroke-linecap: round !important;
   stroke-linejoin: round !important;
   overflow: visible;
 }
 
-/* ─── Bordes dibujados a mano con pulso firme (sin temblor ni doble borde CSS) ─ */
+/* ─── Motor SVG Drawably: Bordes y rellenos dibujados a mano en la interfaz ─── */
 .drawably-svg {
-  /* Desactiva el parpadeo/temblor de drawably-boil para que los trazos sean firmes */
   animation: none !important;
 }
 
-.drawably-rel-host {
-  position: relative;
-}
-
 .drawably-auto-host {
-  isolation: isolate;
-  /* Oculta el borde CSS rectangular nativo para que solo se vea el trazo limpio SVG */
   border-color: transparent !important;
+  box-shadow: none !important;
+  --tw-ring-shadow: 0 0 #0000 !important;
+  background-color: transparent !important;
+  background-image: var(--drawably-svg-bg) !important;
+  background-size: 100% 100% !important;
+  background-repeat: no-repeat !important;
 }
 
-.drawably-auto-svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-  pointer-events: none;
-  z-index: 0;
+:is(
+  .drawably-kind-button-outline,
+  .drawably-kind-button-circle,
+  .drawably-kind-button-pill,
+  .drawably-kind-chip
+):hover {
+  background-image: var(--drawably-svg-bg-hover, var(--drawably-svg-bg)) !important;
 }
 
-.drawably-auto-host > *:not(.drawably-svg) {
-  position: relative;
-  z-index: 1;
+/* Inputs con fondo SVG dibujado a mano */
+.drawably-sketched-input {
+  background-color: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
 }
 
-/* Colores y grosores de trazo firme para cada tipo de componente Drawably */
-.drawably-kind-button-outline > .drawably-auto-svg path.drawably-outline {
-  stroke: var(--ink);
-  stroke-width: 1.5;
-}
-
-.drawably-kind-button-solid > .drawably-auto-svg path.drawably-outline {
-  stroke: var(--ink);
-  stroke-width: 1.65;
-}
-
-.drawably-kind-button-solid > .drawably-auto-svg path.drawably-primary-scribble {
-  stroke: rgba(255, 255, 255, 0.16);
-  stroke-width: 1.25;
-}
-
-.drawably-kind-card > .drawably-auto-svg path.drawably-outline {
-  stroke: var(--ink);
-  stroke-width: 1.45;
-}
-
-.drawably-kind-chip > .drawably-auto-svg path.drawably-outline {
-  stroke: var(--pen);
-  stroke-width: 1.35;
-}
-
-.drawably-kind-divider > .drawably-auto-svg path.drawably-outline {
-  stroke: var(--ink-2);
-  stroke-width: 1.25;
-}
-
-/* Segunda pasada sutil de lápiz/estilógrafo */
-.drawably-auto-svg path.drawably-outline-pass2 {
-  stroke-opacity: 0.36;
-  stroke-width: 1.05 !important;
-}
-
-/* ─── Superficies, tarjetas, menús, diálogos y campos a lápiz ────────────── */
-/* IMPORTANTE: sin backdrop-filter para respetar <RULE[AGENTS_md]> y no atrapar
-   position:fixed en portales ni menús. */
+/* ─── Superficies base (sin backdrop-filter para respetar <RULE[AGENTS_md]>) ─ */
 :is(.glass, .glass-surface, .glass-control, .glass-menu, .glass-header,
   .panel, .surface, .surface-2, .neu-raised, .neu-inset,
   .bg-card, .bg-popover, .bg-background, .bg-surface-2, .bg-muted, .bg-secondary,
@@ -338,35 +290,22 @@ header svg:not(.drawably-svg),
   backdrop-filter: none !important;
 }
 
-:is(.glass, .glass-surface, .glass-menu, .panel, .surface, .neu-raised,
-  .m3-card, .m3-card-outlined, .bg-card, .bg-popover,
-  [role="dialog"], [role="menu"], [role="listbox"],
-  .plus-glass-hero, .plus-glass-card, .plus-glass-note,
-  .notification-summary-surface, .notification-category-panel, .notification-empty-state) {
-  border: 1.5px solid var(--ink);
-  border-radius: 0.625rem;
-  box-shadow: var(--m3-elev-1);
-}
-
 [role="dialog"], [role="menu"], [role="listbox"] {
   background-color: var(--popover);
-  box-shadow: var(--m3-elev-3);
 }
 
-/* Inputs, textareas y selects con borde limpio de trazo firme */
-:is(input, textarea, select) {
+/* Inputs, textareas y selects antes de hidratar o como fallback */
+:is(input, textarea, select):not(.drawably-sketched-input) {
   border-radius: 0.5rem;
   background-color: var(--m3-surface-lowest);
   border: 1.5px solid var(--ink);
-  box-shadow: 1.5px 1.5px 0 0 rgba(24, 24, 27, 0.12);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
 :is(input, textarea, select):focus-visible {
-  border-color: var(--pen);
-  box-shadow: 2px 2px 0 0 var(--pen);
-  outline: none;
+  outline: 2px dashed var(--pen);
+  outline-offset: 1px;
 }
 
 input[type="checkbox"], input[type="radio"], input[type="range"], input[type="color"] {
@@ -384,6 +323,7 @@ input[type="checkbox"], input[type="radio"], input[type="range"], input[type="co
 /* Campos dentro de un control compuesto (.glass-control, .search-field) */
 :is(.glass-control, .search-field) :is(input, textarea, select) {
   background-color: transparent !important;
+  background-image: none !important;
   border: none !important;
   border-radius: 0 !important;
   box-shadow: none !important;
@@ -405,30 +345,23 @@ input[type="checkbox"], input[type="radio"], input[type="range"], input[type="co
   background-color: rgba(39, 36, 209, 0.22);
 }
 
-/* ─── Botones primarios: tinta de bolígrafo azul Drawably (#2724d1) ──────── */
+/* ─── Botones primarios y secundarios ────────────────────────────────────── */
 :is(button, a)[class~="bg-primary"],
 .btn-grad,
 .grad-brand,
 .m3-btn {
-  background-image: var(--glass-btn-fill) !important;
-  background-color: var(--pen) !important;
   color: var(--primary-foreground) !important;
-  border: 1.5px solid var(--ink);
-  border-radius: 0.5rem;
-  box-shadow: 2px 2.5px 0 0 var(--ink) !important;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
-  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1), box-shadow 120ms cubic-bezier(0.2, 0, 0, 1);
+  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1);
 }
 :is(button, a)[class~="bg-primary"]:hover,
 .btn-grad:hover, .grad-brand:hover, .m3-btn:hover {
-  transform: translate(-1px, -1px);
-  box-shadow: 3px 3.5px 0 0 var(--ink) !important;
+  transform: translateY(-1px);
 }
 :is(button, a)[class~="bg-primary"]:active,
 .btn-grad:active, .grad-brand:active, .m3-btn:active {
-  transform: translate(1px, 1.5px);
-  box-shadow: 1px 1px 0 0 var(--ink) !important;
+  transform: translateY(1px) scale(0.98);
 }
 .m3-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: .5rem;
@@ -436,21 +369,14 @@ input[type="checkbox"], input[type="radio"], input[type="range"], input[type="co
   font-size: .875rem; font-weight: 500;
 }
 
-/* Botones secundarios / contorno / icono: papel de boceto con trazo firme */
 .glass-btn, .glass-control, .neu-btn, .m3-btn-outlined, .m3-icon-btn,
 button[class~="border-input"], button[class~="bg-secondary"], button[class~="bg-muted"],
 button[class~="bg-accent"], button[class~="bg-card"] {
-  background-color: var(--card) !important;
-  border: 1.5px solid var(--ink);
-  border-radius: 0.5rem;
-  box-shadow: 2px 2px 0 0 rgba(24, 24, 27, 0.16);
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
-  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1), box-shadow 120ms cubic-bezier(0.2, 0, 0, 1), background-color 120ms ease;
+  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1);
 }
 .m3-btn.m3-btn-outlined {
-  background-image: none !important;
-  background-color: var(--card) !important;
   color: var(--pen) !important;
 }
 .m3-icon-btn {
@@ -459,13 +385,10 @@ button[class~="bg-accent"], button[class~="bg-card"] {
   color: var(--ink);
 }
 :is(.glass-btn, .glass-control, .m3-btn-outlined, .m3-icon-btn):hover {
-  background-color: color-mix(in srgb, var(--pen) 10%, var(--card)) !important;
   transform: translateY(-1px);
-  box-shadow: 2.5px 3px 0 0 rgba(24, 24, 27, 0.22);
 }
 :is(.glass-btn, .glass-control, .m3-btn-outlined, .m3-icon-btn):active {
-  transform: translateY(1px);
-  box-shadow: 1px 1px 0 0 rgba(24, 24, 27, 0.18);
+  transform: translateY(1px) scale(0.98);
 }
 
 /* Rellenos de acento achurados estilo marcador/lápiz */
@@ -490,30 +413,30 @@ button[class~="bg-accent"], button[class~="bg-card"] {
 .m3-elev-3 { box-shadow: var(--m3-elev-3); }
 .m3-card {
   background: var(--card);
-  border: 1.5px solid var(--ink);
   border-radius: 0.625rem;
-  box-shadow: var(--m3-elev-1);
 }
 .m3-card-outlined {
   background: var(--glass-fill-soft);
-  border: 1.5px dashed var(--ink);
   border-radius: 0.625rem;
 }
 .m3-state { transition: background-color .15s ease; }
 .m3-state:hover { background-color: rgba(39, 36, 209, 0.08); }
 .m3-state:active { background-color: rgba(39, 36, 209, 0.14); }
-.m3-scroll-x { overflow-x: auto; scrollbar-width: none; }
+.m3-scroll-x {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0.75rem;
+  margin-block: -0.75rem;
+  scrollbar-width: none;
+}
 .m3-scroll-x::-webkit-scrollbar { display: none; }
 .m3-chip {
   display: inline-flex; align-items: center; gap: .375rem; height: 2rem; padding: 0 .875rem;
   border-radius: 999px;
   font-size: .8125rem; font-weight: 500;
-  background: var(--card); border: 1.5px solid var(--ink); color: var(--ink);
-  box-shadow: 1.5px 1.5px 0 0 rgba(24, 24, 27, 0.14);
+  color: var(--ink);
 }
 .m3-chip-selected {
-  background: rgba(39, 36, 209, 0.14);
-  border-color: var(--pen);
   color: var(--pen);
 }
 .m3-list-item {
@@ -522,7 +445,6 @@ button[class~="bg-accent"], button[class~="bg-card"] {
 }
 .m3-text-field, .m3-text-field-outlined {
   width: 100%; height: 3rem; padding: 0 1rem;
-  border: 1.5px solid var(--ink);
   border-radius: 0.5rem;
 }
 .m3-display-large { font-size: 3.5rem; line-height: 4rem; font-weight: 400; }
@@ -564,16 +486,13 @@ button[class~="bg-accent"], button[class~="bg-card"] {
   background-size: 32px 32px;
 }
 .auth-card {
-  background: var(--card) !important;
-  border: 1.5px solid var(--ink);
   border-radius: 0.75rem !important;
-  box-shadow: 4px 4px 0 0 var(--ink) !important;
   backdrop-filter: none !important;
 }
 
 .glass-menu-drawer {
   background: var(--popover);
-  border-left: 1.5px solid var(--ink);
+  border-left: 2px solid var(--ink);
   box-shadow: -4px 0 0 0 rgba(24, 24, 27, 0.18);
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
@@ -595,42 +514,26 @@ button[class~="bg-accent"], button[class~="bg-card"] {
 .editor-shell {
   background-color: var(--paper);
   background-image:
-    radial-gradient(rgba(24, 24, 27, 0.08) 1px, transparent 0),
+    radial-gradient(rgba(24, 24, 27, 0.085) 1px, transparent 0),
     linear-gradient(to right, rgba(24, 24, 27, 0.035) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(24, 24, 27, 0.035) 1px, transparent 1px);
   background-size: 20px 20px, 40px 40px, 40px 40px;
 }
 .editor-rail, .editor-bar, .app-header {
   background: var(--card) !important;
-  border-color: var(--ink) !important;
-  box-shadow: 0 2px 0 0 rgba(24, 24, 27, 0.18);
+  border-color: transparent !important;
+  box-shadow: none !important;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
 .editor-fab-group {
-  background: var(--card);
-  border: 1.5px solid var(--ink);
   border-radius: 0.75rem;
-  box-shadow: 2.5px 3px 0 0 var(--ink);
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
 .editor-fab {
-  background: transparent;
-  border: 1.5px solid transparent;
   border-radius: 0.5rem;
-  transition: background-color .15s ease, color .15s ease;
-}
-.editor-fab:hover {
-  background: rgba(39, 36, 209, 0.10);
-  border-color: var(--ink);
-}
-:is(.editor-bar, .editor-rail, .editor-shell) :is(a, button)[class~="bg-card"] {
-  background-color: var(--card) !important;
-  border: 1.5px solid var(--ink);
-  box-shadow: 2px 2px 0 0 rgba(24, 24, 27, 0.18);
-  -webkit-backdrop-filter: none !important;
-  backdrop-filter: none !important;
+  transition: transform .12s ease, color .15s ease;
 }
 
 .auth-scene {

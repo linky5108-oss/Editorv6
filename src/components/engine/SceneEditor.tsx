@@ -151,7 +151,7 @@ export function SceneEditor({
 
   useEffect(() => {
     const canvas = canvasRef.current!;
-    const ctx = (canvas.getContext("2d", { desynchronized: true }) ?? canvas.getContext("2d"))!;
+    const ctx = canvas.getContext("2d")!;
     let mounted = true;
 
     const hasAnimated = scene.entities.some((e) =>
@@ -186,11 +186,8 @@ export function SceneEditor({
       ctx.translate(pan.x, pan.y);
       ctx.scale(scale, scale);
 
-      // Level box background
-      const grd = ctx.createLinearGradient(0, 0, 0, scene.height);
-      grd.addColorStop(0, scene.bg || "#0b1e3f");
-      grd.addColorStop(1, "#020617");
-      ctx.fillStyle = grd;
+      // Level box background (clean game surface without pencil filter)
+      ctx.fillStyle = scene.bg || "#0b1e3f";
       ctx.fillRect(0, 0, scene.width, scene.height);
 
       if (scene.bgImage) {
@@ -206,7 +203,7 @@ export function SceneEditor({
       }
 
       // Grid inside level box
-      ctx.strokeStyle = "rgba(56,189,248,0.10)";
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.07)";
       ctx.lineWidth = 1 / scale;
       ctx.beginPath();
       for (let x = 0; x <= scene.width; x += 40) {
@@ -219,8 +216,8 @@ export function SceneEditor({
       }
       ctx.stroke();
 
-      // Level box border
-      ctx.strokeStyle = "rgba(56,189,248,0.55)";
+      // Clean level border
+      ctx.strokeStyle = "rgba(125, 211, 252, 0.45)";
       ctx.lineWidth = 2 / scale;
       ctx.strokeRect(0, 0, scene.width, scene.height);
 
@@ -267,7 +264,7 @@ export function SceneEditor({
           const img = getRenderableImage(e.texture);
           if (img) drawFit(img);
           else {
-            ctx.fillStyle = "rgba(56,189,248,0.15)";
+            ctx.fillStyle = "rgba(56, 189, 248, 0.14)";
             ctx.fillRect(0, 0, e.w, e.h);
             const pendingImg = getImage(e.texture);
             if (pendingImg && !pendingImg.onload) {
@@ -280,36 +277,34 @@ export function SceneEditor({
             ctx.translate(e.w, 0);
             ctx.scale(-1, 1);
           }
-          ctx.shadowColor = e.color;
-          ctx.shadowBlur = e.kind === "coin" ? 10 : e.kind === "goal" && e.goal ? 12 : 4;
-          ctx.fillStyle = e.color;
+
           if (e.kind === "coin") {
+            ctx.fillStyle = e.color || "#fbbf24";
             ctx.beginPath();
-            ctx.arc(e.w / 2, e.h / 2, e.w / 2, 0, Math.PI * 2);
+            ctx.arc(e.w / 2, e.h / 2, Math.min(e.w, e.h) / 2, 0, Math.PI * 2);
             ctx.fill();
           } else if (e.kind === "goal" && e.goal) {
-            ctx.fillStyle = "rgba(125,211,252,0.3)";
-            ctx.fillRect(0, 0, e.w, e.h);
-            ctx.fillStyle = e.color;
-            ctx.fillRect(e.w / 2 - 2, 0, 4, e.h);
+            ctx.fillStyle = "rgba(125, 211, 252, 0.18)";
             ctx.beginPath();
-            ctx.moveTo(e.w / 2 + 2, 4);
+            ctx.roundRect(0, 0, e.w, e.h, 5);
+            ctx.fill();
+            ctx.fillStyle = "#e2e8f0";
+            ctx.fillRect(e.w / 2 - 1.5, 2, 3, e.h - 4);
+            ctx.fillStyle = e.color || "#7dd3fc";
+            ctx.beginPath();
+            ctx.moveTo(e.w / 2 + 1.5, 4);
             ctx.lineTo(e.w / 2 + 22, 12);
-            ctx.lineTo(e.w / 2 + 2, 20);
+            ctx.lineTo(e.w / 2 + 1.5, 20);
             ctx.closePath();
             ctx.fill();
           } else {
             const r = e.kind === "platform" ? 4 : 6;
+            ctx.fillStyle = e.color;
             ctx.beginPath();
-            ctx.moveTo(r, 0);
-            ctx.arcTo(e.w, 0, e.w, e.h, r);
-            ctx.arcTo(e.w, e.h, 0, e.h, r);
-            ctx.arcTo(0, e.h, 0, 0, r);
-            ctx.arcTo(0, 0, e.w, 0, r);
-            ctx.closePath();
+            ctx.roundRect(0, 0, e.w, e.h, r);
             ctx.fill();
+
             if (e.kind === "player") {
-              ctx.shadowBlur = 0;
               drawChibiCharacter(ctx, 0, 0, e.w, e.h, e.color, flipX ? -1 : 1);
             }
           }
@@ -325,7 +320,7 @@ export function SceneEditor({
         const isSel = e.id === selectedId;
         ctx.save();
         ctx.lineWidth = (isSel ? 2 : 1) / scale;
-        ctx.strokeStyle = isSel ? "#f43f5e" : "rgba(244,63,94,0.55)";
+        ctx.strokeStyle = isSel ? "#f43f5e" : "rgba(244, 63, 94, 0.55)";
         ctx.setLineDash([8 / scale, 6 / scale]);
         ctx.strokeRect(e.x + hb.x, e.y + hb.y, hb.w, hb.h);
         ctx.setLineDash([]);
@@ -349,7 +344,7 @@ export function SceneEditor({
           const selCx = pan.x + (sel.x + sel.w / 2) * scale;
           const selCy = pan.y + (sel.y + sel.h / 2) * scale;
           ctx.save();
-          ctx.strokeStyle = "rgba(167,139,250,0.85)";
+          ctx.strokeStyle = "rgba(56, 189, 248, 0.85)";
           ctx.lineWidth = 1.5;
           ctx.setLineDash([5, 4]);
           ctx.beginPath();
@@ -368,23 +363,23 @@ export function SceneEditor({
             if (!other) continue;
             const ox = pan.x + (other.x + other.w / 2) * scale;
             const oy = pan.y + (other.y + other.h / 2) * scale;
-            ctx.fillStyle = "#a78bfa";
+            ctx.fillStyle = "#38bdf8";
             ctx.fillRect(ox - 3, oy - 3, 6, 6);
           }
           ctx.restore();
         }
 
-        // Selection bounding box
-        ctx.lineWidth = 1.5;
+        // Clean selection bounding box
+        ctx.lineWidth = 2;
         ctx.strokeStyle = "#38bdf8";
-        ctx.strokeRect(sx + 0.5, sy + 0.5, sw - 1, sh - 1);
+        ctx.strokeRect(sx, sy, Math.max(4, sw), Math.max(4, sh));
 
         for (const h of HANDLES) {
           const wp = handlePos(sel, h);
           const hx = pan.x + wp.x * scale - HANDLE_PX / 2;
           const hy = pan.y + wp.y * scale - HANDLE_PX / 2;
-          ctx.fillStyle = "#f8fafc";
-          ctx.strokeStyle = "#0ea5e9";
+          ctx.fillStyle = "#ffffff";
+          ctx.strokeStyle = "#0284c7";
           ctx.lineWidth = 1.5;
           ctx.fillRect(hx, hy, HANDLE_PX, HANDLE_PX);
           ctx.strokeRect(hx + 0.5, hy + 0.5, HANDLE_PX - 1, HANDLE_PX - 1);

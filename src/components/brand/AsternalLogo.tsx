@@ -124,73 +124,46 @@ export function AsternalMark({ size = 40, className = "", title = "Asternal" }: 
         </clipPath>
       </defs>
 
-      {/* Papel y cuadro bocetado con estilo a lápiz / bolígrafo drawably */}
-      <rect x="2" y="2" width="60" height="60" rx="14" fill="#e3e3e1" />
+      {/* Cuadro con el degradado de marca */}
+      <rect x="0" y="0" width="64" height="64" rx="17" fill={`url(#${bgId})`} />
 
-      {/* Luces, sombreado cruzado a lápiz y trazos bocetados */}
+      {/* Luces, halo, letra y destello */}
       <g clipPath={`url(#${clipId})`}>
         <path d="M0 0 H30 L0 44 Z" fill={`url(#${glossId})`} />
-        {/* Trama a lápiz (scribble hatching) */}
-        <path
-          d="M 8 16 L 20 6 M 6 28 L 32 6 M 6 42 L 46 6 M 8 54 L 56 10 M 18 58 L 58 22 M 32 58 L 58 34 M 46 58 L 58 48"
-          stroke="#2724d1"
-          strokeWidth="1.2"
-          strokeOpacity="0.16"
-          strokeLinecap="round"
-        />
         <ellipse cx="32" cy="31" rx="20" ry="21" fill={`url(#${glowId})`} />
 
-        {/* Sombra de grafito desplazada de la letra */}
+        {/* Sombra suave de la letra */}
         <path
           d={A_OUTLINE}
-          transform="translate(1.8 2.0)"
-          fill="#18181b"
+          transform="translate(0 1.4)"
+          fill="#0a2558"
           opacity="0.22"
           fillRule="evenodd"
         />
 
-        {/* La letra «A», con relleno de tinta azul bolígrafo y doble trazo */}
+        {/* La letra «A», con relleno platino-azulado */}
         <path
           d={A_OUTLINE}
-          fill="#2724d1"
+          fill={`url(#${letterId})`}
           fillRule="evenodd"
-          stroke="#18181b"
-          strokeWidth="1.5"
-          strokeLinejoin="round"
         />
-        <path
-          d={A_OUTLINE}
-          transform="translate(-0.6 0.5) rotate(-0.8 32 32)"
-          fill="none"
-          stroke="#2724d1"
-          strokeWidth="1"
-          strokeOpacity="0.7"
-          strokeLinejoin="round"
-        />
-        {/* Canto bocetado del trazo derecho */}
+        {/* Luz de canto del trazo derecho */}
         <path d="M32 16 L44.8 50.4" fill="none" stroke={`url(#${rimId})`} strokeWidth="1.2" strokeLinecap="round" />
 
-        {/* Destello dibujado a mano */}
-        <path d={SPARK} fill="#b45309" stroke="#18181b" strokeWidth="1" strokeLinejoin="round" />
+        {/* Destello de cuatro puntas */}
+        <path d={SPARK} fill="#ffffff" />
       </g>
 
-      {/* Doble borde dibujado a mano alrededor del cuadro */}
-      <path
-        d="M 15 3.2 C 28 2.1, 41 2.5, 50 3.4 C 57.5 4.1, 60.4 7.8, 60.8 15.2 C 61.3 27.5, 60.7 40.2, 60.4 49.5 C 60.0 56.8, 56.4 60.2, 49.2 60.7 C 37.5 61.4, 24.8 60.9, 14.5 60.5 C 7.2 60.1, 3.6 56.4, 3.2 48.8 C 2.7 36.8, 3.1 24.5, 3.5 14.8 C 3.9 7.5, 7.6 3.9, 15 3.2 Z"
+      {/* Borde cristalino interior */}
+      <rect
+        x="0.75"
+        y="0.75"
+        width="62.5"
+        height="62.5"
+        rx="16.25"
         fill="none"
-        stroke="#18181b"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M 16 4.4 C 29 3.6, 40 3.8, 49 4.5 C 56.2 5.2, 59.3 8.6, 59.6 16.0 C 60.1 28.1, 59.8 39.5, 59.3 48.6 C 58.9 55.6, 55.4 59.1, 48.1 59.5 C 36.8 60.1, 25.4 59.8, 15.2 59.3 C 8.1 58.9, 4.7 55.2, 4.3 47.9 C 3.8 36.1, 4.2 25.2, 4.7 15.6 C 5.1 8.4, 8.8 5.0, 16 4.4 Z"
-        fill="none"
-        stroke="#2724d1"
-        strokeWidth="1.2"
-        strokeOpacity="0.65"
-        strokeLinecap="round"
-        strokeLinejoin="round"
+        stroke={`url(#${edgesId})`}
+        strokeWidth="1.5"
       />
     </svg>
   );
@@ -234,13 +207,10 @@ export function AsternalLetterA({ height = 40, className = "" }: LetterAProps) {
 
       {/* Luz azul por detrás de la letra: le da profundidad sobre el fondo. */}
       <path d={A_GLYPH} style={{ fill: BRAND_BLUE_SOFT }} opacity="0.45" filter={`url(#${glowId})`} fillRule="evenodd" />
-      {/* La letra, con el degradado de marca y contorno de lápiz grafito. */}
+      {/* La letra, con el degradado de marca. */}
       <path
         d={A_GLYPH}
         fill={`url(#${fillId})`}
-        stroke="#18181b"
-        strokeWidth="1.1"
-        strokeLinejoin="round"
         fillRule="evenodd"
       />
     </svg>

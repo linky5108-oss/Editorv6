@@ -3335,17 +3335,17 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
 
         {/* ── Visor del lienzo ─────────────────────────────────────────────── */}
         <div className="order-1 md:order-2 flex-1 min-w-0 min-h-0 flex flex-col bg-surface-2/50">
-          {/* Accesos siempre visibles, independientes del panel de ajustes. */}
-          <div className="shrink-0 flex flex-wrap items-center gap-2 px-3 py-2 border-b border-line bg-surface-2" aria-label="Ajustes rápidos del trazo">
+          {/* Accesos siempre visibles, independientes del panel de ajustes (una sola línea fija). */}
+          <div className="shrink-0 h-11 flex flex-nowrap items-center gap-1.5 px-2.5 border-b border-line bg-surface-2 overflow-x-auto no-scrollbar whitespace-nowrap" aria-label="Ajustes rápidos del trazo">
             <Popover open={quickSetting === "color"} onOpenChange={open => { if (open) setPanelOpen(false); setQuickSetting(open ? "color" : null); }}>
               <PopoverTrigger asChild>
                 <button
                   aria-label="Cambiar color"
                   title="Cambiar color"
-                  className="inline-flex h-10 items-center gap-2 rounded-full border border-line bg-card px-3 text-xs font-medium hover:bg-accent transition"
+                  className="shrink-0 inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-card px-2.5 text-xs font-medium hover:bg-accent transition"
                 >
-                  <span className="h-5 w-5 rounded-full border border-line" style={{ background: color }} aria-hidden />
-                  Color
+                  <span className="h-4 w-4 shrink-0 rounded-full border border-line" style={{ background: color }} aria-hidden />
+                  <span>Color</span>
                 </button>
               </PopoverTrigger>
               <PopoverContent data-paint-quick-setting align="start" collisionPadding={12} aria-label="Cambiar color del trazo" className="z-[126] w-80 max-w-[calc(100vw-24px)] max-h-[70dvh] overflow-y-auto rounded-2xl border-line">
@@ -3427,8 +3427,10 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
             </Popover>
             <Popover open={quickSetting === "width"} onOpenChange={open => { if (open) setPanelOpen(false); setQuickSetting(open ? "width" : null); }}>
               <PopoverTrigger asChild>
-                <button aria-label="Cambiar grosor" title="Cambiar grosor" className="inline-flex h-10 items-center gap-2 rounded-full border border-line bg-card px-3 text-xs font-medium hover:bg-accent transition">
-                  <Pencil size={16} /> Grosor <span className="font-mono tabular-nums text-primary">{width} px</span>
+                <button aria-label="Cambiar grosor" title="Cambiar grosor" className="shrink-0 inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-card px-2.5 text-xs font-medium hover:bg-accent transition">
+                  <Pencil size={14} className="shrink-0" />
+                  <span>Grosor</span>
+                  <span className="font-mono tabular-nums text-primary">{width} px</span>
                 </button>
               </PopoverTrigger>
               <PopoverContent data-paint-quick-setting align="start" collisionPadding={12} aria-label="Cambiar grosor del trazo" className="z-[126] w-72 max-w-[calc(100vw-24px)] max-h-[70dvh] overflow-y-auto rounded-2xl border-line">
@@ -3489,8 +3491,8 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
               </PopoverContent>
             </Popover>
 
-            {/* Controles rápidos de Selección de Área y Transformación */}
-            <div className="inline-flex items-center gap-1 rounded-full border border-line bg-card p-1">
+            {/* Controles rápidos de Selección de Área y Transformación en la misma línea */}
+            <div className="shrink-0 inline-flex items-center gap-0.5 rounded-full border border-line bg-card p-0.5">
               <button
                 type="button"
                 onClick={() => {
@@ -3499,13 +3501,13 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
                 }}
                 aria-pressed={(tool === "select" || tool === "move") && selectionMode !== "lasso"}
                 title="Seleccionar área rectangular para transformar (M)"
-                className={`inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition ${
+                className={`inline-flex h-7 items-center gap-1 rounded-full px-2 text-xs font-medium transition ${
                   tool === "select" && selectionMode !== "lasso"
                     ? "bg-accent text-accent-foreground"
                     : "text-ink-2 hover:bg-muted hover:text-foreground"
                 }`}
               >
-                <Scan size={14} />
+                <Scan size={13} className="shrink-0" />
                 <span>Marco</span>
               </button>
               <button
@@ -3516,19 +3518,19 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
                 }}
                 aria-pressed={(tool === "select" || tool === "move") && selectionMode === "lasso"}
                 title="Seleccionar área con lazo libre para transformar"
-                className={`inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition ${
+                className={`inline-flex h-7 items-center gap-1 rounded-full px-2 text-xs font-medium transition ${
                   (tool === "select" || tool === "move") && selectionMode === "lasso"
                     ? "bg-accent text-accent-foreground"
                     : "text-ink-2 hover:bg-muted hover:text-foreground"
                 }`}
               >
-                <Lasso size={14} />
+                <Lasso size={13} className="shrink-0" />
                 <span>Lazo</span>
               </button>
             </div>
 
             {(hasFloatingRaster || selectedShape || selectedText) && (
-              <div className="inline-flex flex-wrap items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-1">
+              <div className="shrink-0 inline-flex flex-nowrap items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5">
                 <button
                   type="button"
                   onClick={() => flipActiveTarget("x")}
@@ -3748,12 +3750,12 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
             </div>
           </div>
 
-          {/* Barra inferior del visor: medidas, zoom y cuadrícula */}
-          <div className="shrink-0 h-12 flex items-center justify-between gap-2 px-2 md:px-3 border-t border-line bg-surface-2 overflow-x-auto no-scrollbar">
-            <span className="pl-1 shrink-0 text-[10px] font-mono tabular-nums text-muted-foreground">
-              {sizeW}×{sizeH} · {Math.round(zoom * 100)}%
+          {/* Barra inferior del visor: medidas, zoom y cuadrícula (una sola línea limpia) */}
+          <div className="shrink-0 h-11 flex flex-nowrap items-center justify-between gap-1.5 px-2.5 md:px-3 border-t border-line bg-surface-2 overflow-x-auto no-scrollbar whitespace-nowrap">
+            <span className="shrink-0 text-[10px] font-mono tabular-nums text-muted-foreground">
+              {sizeW}×{sizeH}
             </span>
-            <div className="flex items-center gap-0.5 shrink-0">
+            <div className="flex flex-nowrap items-center gap-1 shrink-0">
               {/* Único acceso a los lápices: vive abajo, junto al lienzo, y su
                   ventana se abre desde el borde inferior. */}
               <button
@@ -3761,9 +3763,9 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
                 aria-label="Elegir lápices"
                 aria-expanded={quickSetting === "brush"}
                 aria-controls="paint-brushes-sheet"
-                className="inline-flex h-9 items-center gap-1.5 rounded-full border border-line bg-card px-2.5 text-[11px] font-medium text-ink-2 hover:bg-accent hover:text-accent-foreground active:scale-95 transition"
+                className="shrink-0 inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-card px-2.5 text-[11px] font-medium text-ink-2 hover:bg-accent hover:text-accent-foreground active:scale-95 transition"
               >
-                <Pencil size={15} />
+                <Pencil size={14} className="shrink-0" />
                 <span className="hidden sm:inline">Lápices</span>
                 <span className="font-mono text-primary">{PAINT_BRUSHES.find(b => b.id === brush)?.name ?? brush}</span>
               </button>
@@ -3774,9 +3776,9 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
                 aria-label="Elegir formas"
                 aria-expanded={quickSetting === "shapes"}
                 aria-controls="paint-shapes-sheet"
-                className="inline-flex h-9 items-center gap-1.5 rounded-full border border-line bg-card px-2.5 text-[11px] font-medium text-ink-2 hover:bg-accent hover:text-accent-foreground active:scale-95 transition"
+                className="shrink-0 inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-card px-2.5 text-[11px] font-medium text-ink-2 hover:bg-accent hover:text-accent-foreground active:scale-95 transition"
               >
-                <Shapes size={15} />
+                <Shapes size={14} className="shrink-0" />
                 <span className="hidden sm:inline">Formas</span>
                 <span className="font-mono text-primary">{shapeDef(shapeKind).name}</span>
               </button>
@@ -3786,29 +3788,28 @@ export function PaintEditor({ onSave, onClose, size: initialSize = 512, source }
                 onClick={() => setZoom(1)}
                 title="Ajustar al área (0)"
                 aria-label="Ajustar al área"
-                className="h-9 px-2 rounded-full text-[10px] font-mono tabular-nums text-ink-2 hover:bg-accent hover:text-accent-foreground transition"
+                className="shrink-0 h-8 px-2 rounded-full text-[10px] font-mono tabular-nums text-ink-2 hover:bg-accent hover:text-accent-foreground transition"
               >
                 {Math.round(zoom * 100)}%
               </button>
-              <span className="w-px self-stretch my-1.5 bg-line" aria-hidden />
               <button
                 onClick={() => setShowGrid(g => !g)}
                 aria-pressed={showGrid}
                 title="Cuadrícula de guía"
                 aria-label="Cuadrícula de guía"
-                className={`w-9 h-9 grid place-items-center rounded-full transition ${
+                className={`shrink-0 w-8 h-8 grid place-items-center rounded-full transition ${
                   showGrid ? "bg-accent text-accent-foreground" : "text-ink-2 hover:bg-accent hover:text-accent-foreground"
                 }`}
               >
-                <Grid size={16} />
+                <Grid size={15} />
               </button>
               <button
                 onClick={() => setZoom(1)}
                 title="Ajustar al área"
                 aria-label="Ajustar al área"
-                className="w-9 h-9 grid place-items-center rounded-full text-ink-2 hover:bg-accent hover:text-accent-foreground transition"
+                className="shrink-0 w-8 h-8 grid place-items-center rounded-full text-ink-2 hover:bg-accent hover:text-accent-foreground transition"
               >
-                <Maximize2 size={15} />
+                <Maximize2 size={14} />
               </button>
             </div>
           </div>

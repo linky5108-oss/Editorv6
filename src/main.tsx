@@ -5,7 +5,6 @@ import { RouterProvider } from "@tanstack/react-router";
 import { getRouter } from "./router";
 import "./styles.css";
 import "./glass.css";
-import { DrawablyThemeProvider } from "@/lib/ui/drawably-theme";
 
 // Initialize the router with query client
 // «/index» o «/index.html» no existen: se llevan al inicio real.
@@ -55,7 +54,6 @@ class RootErrorBoundary extends React.Component<
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <RootErrorBoundary>
-      <DrawablyThemeProvider />
       <RouterProvider router={router} />
       <Toaster />
     </RootErrorBoundary>
