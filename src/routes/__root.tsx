@@ -8,7 +8,6 @@ import {
 import { useEffect } from "react";
 
 import { reportLovableError } from "../lib/lovable-error-reporting";
-import { DrawablyThemeProvider } from "../lib/ui/drawably-theme";
 
 function NotFoundComponent() {
   return (
@@ -89,7 +88,6 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <DrawablyThemeProvider />
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       <Outlet />
     </QueryClientProvider>

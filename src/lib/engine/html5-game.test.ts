@@ -159,7 +159,7 @@ describe("motor y vista previa HTML5 autónomos (independientes del editor)", ()
     expect(compiledHtml).toContain('"dash"');
     expect(compiledHtml).toContain('"laser"');
 
-    // Verificar que se eliminó el botón flotante de Orión y que el panel de scripts solo muestra el cuadro de scripts, el recuadro de código y el botón Aplicar sin mencionar IA
+    // Verificar que se eliminó el botón flotante de Orión y que su sistema de IA se reutiliza para crear Script manual sin bloques ni código a mano
     const editorSource = read("src/components/engine/AsternalEditor.tsx");
     expect(editorSource).not.toContain("orion-top-left-trigger");
     expect(editorSource).toContain("OrionAiModeScreen");
@@ -167,15 +167,11 @@ describe("motor y vista previa HTML5 autónomos (independientes del editor)", ()
     expect(editorSource).toContain("open-entity-script-manual-btn");
 
     const orionScreenSource = read("src/components/engine/OrionAiModeScreen.tsx");
-    expect(orionScreenSource).not.toContain("Inteligencia Artificial");
+    expect(orionScreenSource).toContain("Script manual · Inteligencia Artificial");
     expect(orionScreenSource).toContain("orion-ai-mode-fullscreen");
-    expect(orionScreenSource).toContain("Aplicar");
-    expect(orionScreenSource).toContain("Aplicando...");
 
     const scriptEditorSource = read("src/components/engine/ScriptEditor.tsx");
-    expect(scriptEditorSource).not.toContain("Inteligencia Artificial");
-    expect(scriptEditorSource).toContain("Aplicar");
-    expect(scriptEditorSource).toContain("Aplicando...");
+    expect(scriptEditorSource).toContain("SCRIPT MANUAL");
     expect(scriptEditorSource).not.toContain("+ NEW SCRIPT");
     expect(scriptEditorSource).not.toContain("+ ADD BLOCK");
   });
@@ -419,7 +415,7 @@ describe("motor y vista previa HTML5 autónomos (independientes del editor)", ()
     // Verificar que la biblioteca se gestiona en el apartado de Ajustes de AsternalEditor
     const editorSource = read("src/components/engine/AsternalEditor.tsx");
     expect(editorSource).toContain("settings-audio-library");
-    expect(editorSource).toContain("BIBLIOTECA DE SONIDOS Y MÚSICA");
+    expect(editorSource).toContain("BIBLIOTECA DE SONIDOS Y MÚSICA (ASSETS)");
   });
 
   it("gestiona todos los scripts e interfaz desde el panel de Scripts Manuales, sin el editor de UI ni el sistema de Scratch", async () => {
@@ -506,75 +502,4 @@ describe("motor y vista previa HTML5 autónomos (independientes del editor)", ()
     expect(sceneEditorSource).not.toContain("CÁMARA INICIAL");
     expect(sceneEditorSource).toContain("ctx.strokeRect(0, 0, scene.width, scene.height);");
   });
-
-  it("traduce el lenguaje de programación inventado por el usuario (ej. SI el jugador pierde: MOSTRAR sonido en el mapa) a código JavaScript/HTML5 funcional y bloques del motor", async () => {
-    const {
-      compileUserLanguageLocally,
-      DEFAULT_USER_LANGUAGE,
-      extractCustomKeywordsFromCode,
-    } = await import("../ai/custom-language");
-    const { synthesizeScriptsFromRequest } = await import("../ai/gemini-provider");
-
-    const userCode = "SI el jugador pierde:\nMOSTRAR sonido en el mapa";
-    const compiled = compileUserLanguageLocally(userCode, {
-      ...DEFAULT_USER_LANGUAGE,
-      name: "MiLenguajeGamer",
-    });
-
-    expect(compiled.compiledScripts.length).toBeGreaterThan(0);
-    expect(compiled.compiledScripts[0].event).toBe("onLose");
-    expect(compiled.compiledScripts[0].customLanguageCode).toContain("SI el jugador pierde:");
-    expect(compiled.compiledScripts[0].languageName).toBe("MiLenguajeGamer");
-    expect(compiled.compiledScripts[0].blocks.some((b) => b.kind === "playSound")).toBe(true);
-    expect(compiled.compiledJs).toContain("window.AsternalRuntime.registerHook");
-    expect(compiled.compiledJs).toContain("SONIDO EN EL MAPA");
-
-    // También verifica el sintetizador de scripts manuales con lenguaje propio
-    const synth = synthesizeScriptsFromRequest(userCode);
-    expect(synth[0].event).toBe("onLose");
-    expect(synth[0].customLanguageCode).toContain("MOSTRAR sonido en el mapa");
-
-    // Verifica que un usuario pueda definir sus propias palabras e instrucciones personalizadas
-    const customLang = {
-      ...DEFAULT_USER_LANGUAGE,
-      name: "KronoScript",
-      dictionary: [
-        ...DEFAULT_USER_LANGUAGE.dictionary,
-        {
-          id: "kw-custom-1",
-          keyword: "ACTIVAR Protocolo Omega",
-          meaning: "Sumar 500 puntos y sacudir camara 12",
-          category: "accion" as const,
-        },
-      ],
-    };
-    const customCode = "CUANDO el jugador toca enemigo:\nACTIVAR Protocolo Omega";
-    const customCompiled = compileUserLanguageLocally(customCode, customLang);
-    expect(customCompiled.compiledScripts[0].event).toBe("onCollide");
-    expect(customCompiled.compiledScripts[0].blocks.some((b) => b.kind === "addScore" && b.value === 500)).toBe(true);
-
-    const detected = extractCustomKeywordsFromCode("SI cae al abismo:\nLANZAR destello solar", []);
-    expect(detected.length).toBeGreaterThanOrEqual(2);
-
-    // Verifica que buildOrionIntelligentPatch + applyOrionPatchToProject integren el JS traducido en el HTML5
-    const { newProject } = await import("./core");
-    const project = newProject();
-    const patch = buildOrionIntelligentPatch(userCode, project);
-    const updated = applyOrionPatchToProject(project, patch);
-    const html = buildProjectGameHtml(updated, true);
-    expect(html).toContain("SONIDO EN EL MAPA");
-
-    // Verifica que el panel de scripts no mencione inteligencia artificial y solo muestre el cuadro de scripts, el recuadro para escribir y el botón Aplicar / Aplicando...
-    const orionScreenSource = read("src/components/engine/OrionAiModeScreen.tsx");
-    const scriptEditorSource = read("src/components/engine/ScriptEditor.tsx");
-    expect(orionScreenSource).not.toContain("Inteligencia Artificial");
-    expect(orionScreenSource).not.toContain("Traducir con IA");
-    expect(orionScreenSource).toContain("Aplicando...");
-    expect(orionScreenSource).toContain("Aplicar");
-    expect(scriptEditorSource).not.toContain("Inteligencia Artificial");
-    expect(scriptEditorSource).not.toContain("TRADUCIR Y CREAR SCRIPT CON IA");
-    expect(scriptEditorSource).toContain("Aplicando...");
-    expect(scriptEditorSource).toContain("Aplicar");
-  });
 });
-

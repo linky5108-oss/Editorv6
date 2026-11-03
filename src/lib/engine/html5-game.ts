@@ -146,43 +146,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
 
   const safeTitle = escapeHtmlText(title);
   const customCss = (customRuntime?.cssCode ?? "").trim();
-  const collectedEntityJsChunks: string[] = [];
-  if (customRuntime?.jsCode?.trim()) {
-    collectedEntityJsChunks.push(customRuntime.jsCode.trim());
-  }
-  for (const sc of allScenes) {
-    for (const ent of sc.entities ?? []) {
-      for (const s of ent.scripts ?? []) {
-        if (s.compiledJs && s.compiledJs.trim()) {
-          const snippet = s.compiledJs.trim();
-          if (!collectedEntityJsChunks.some((c) => c.includes(snippet))) {
-            collectedEntityJsChunks.push(snippet);
-          }
-        }
-      }
-    }
-    for (const uiEl of sc.ui ?? []) {
-      for (const s of uiEl.scripts ?? []) {
-        if (s.compiledJs && s.compiledJs.trim()) {
-          const snippet = s.compiledJs.trim();
-          if (!collectedEntityJsChunks.some((c) => c.includes(snippet))) {
-            collectedEntityJsChunks.push(snippet);
-          }
-        }
-      }
-    }
-  }
-  const rawCustomJs = collectedEntityJsChunks.join("\n\n").trim() || DEFAULT_CUSTOM_RUNTIME_COMMENT;
-  const sanitizedCustomJs = rawCustomJs.replace(/<\/script/gi, "<\\/script");
-  let customJsIsSyntacticallyValid = true;
-  try {
-    new Function(sanitizedCustomJs);
-  } catch {
-    customJsIsSyntacticallyValid = false;
-  }
-  const customJs = customJsIsSyntacticallyValid
-    ? sanitizedCustomJs
-    : `/* Error de sintaxis en script personalizado omitido */\n// ${sanitizedCustomJs.replace(/\r?\n/g, "\n// ")}`;
+  const customJs = (customRuntime?.jsCode ?? "").trim() || DEFAULT_CUSTOM_RUNTIME_COMMENT;
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -196,7 +160,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background: #0b1e3f;
+    background: #020617;
     color: #f8fafc;
     font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     user-select: none;
@@ -209,6 +173,9 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     height: 100%;
     overflow: hidden;
     margin: 0 auto;
+    contain: strict;
+    transform: translateZ(0);
+    backface-visibility: hidden;
   }
   #game-root.camera-vertical {
     max-width: min(100%, calc(100dvh * 9 / 16));
@@ -221,6 +188,9 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     width: 100%;
     height: 100%;
     touch-action: none;
+    will-change: contents, transform;
+    transform: translateZ(0);
+    backface-visibility: hidden;
     image-rendering: auto;
   }
   .top-bar {
@@ -416,11 +386,11 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
   <canvas id="game-canvas"></canvas>
 
   <div class="top-bar">
-    <div id="fps-badge" class="badge-fps" style="display:${showFPS !== false ? "block" : "none"}">60 FPS</div>
-    <button id="btn-stop" type="button" class="btn-stop" style="display:${embedded !== false ? "block" : "none"}">STOP</button>
+    <div id="fps-badge" class="badge-fps" style="display:none">60 FPS</div>
+    <button id="btn-stop" type="button" class="btn-stop" style="display:none">STOP</button>
   </div>
 
-  <div id="touch-bar" class="touch-bar" style="display:${touchControls !== false ? "flex" : "none"}">
+  <div id="touch-bar" class="touch-bar" style="display:none">
     <div class="touch-group">
       <button id="touch-left" type="button" class="touch-btn">◀</button>
       <button id="touch-right" type="button" class="touch-btn">▶</button>
@@ -693,22 +663,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
       if (!normalized.onRender && typeof normalized.onDraw === "function") normalized.onRender = normalized.onDraw;
       if (!normalized.onKeyDown && typeof normalized.onKey === "function") normalized.onKeyDown = normalized.onKey;
       if (!normalized.onInit && typeof normalized.onStart === "function") normalized.onInit = normalized.onStart;
-      if (normalized.id) {
-        var existingHookIdx = -1;
-        for (var hi = 0; hi < runtimeHooksList.length; hi++) {
-          if (runtimeHooksList[hi] && runtimeHooksList[hi].id === normalized.id) {
-            existingHookIdx = hi;
-            break;
-          }
-        }
-        if (existingHookIdx >= 0) {
-          runtimeHooksList[existingHookIdx] = normalized;
-        } else {
-          runtimeHooksList.push(normalized);
-        }
-      } else {
-        runtimeHooksList.push(normalized);
-      }
+      runtimeHooksList.push(normalized);
       if (normalized.customBlocks && typeof normalized.customBlocks === "object") {
         Object.keys(normalized.customBlocks).forEach(function(k) {
           customBlockHandlers[k] = normalized.customBlocks[k];
@@ -1960,7 +1915,6 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
         };
         for (var i = 0; i < scripts.length; i++) {
           var s = scripts[i];
-          if (s.compiledJs && String(s.compiledJs).trim().length > 0) continue;
           var key = element.id + "|" + s.id;
           if (uiSuspended.has(key)) continue;
           (function(k) {
@@ -1986,7 +1940,6 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
         }
 
         function run(script, self, other) {
-          if (script.compiledJs && String(script.compiledJs).trim().length > 0) return;
           var key = keyFor(script, self);
           if (suspended.has(key)) return;
           var ctx = {
@@ -2562,7 +2515,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
 
   // --- Runtime Loop & State ---
   var canvas = document.getElementById("game-canvas");
-  var ctx = canvas.getContext("2d");
+  var ctx = canvas.getContext("2d", { alpha: false, desynchronized: true }) || canvas.getContext("2d");
 
   var activeSceneId = PAYLOAD.initialSceneId || (SCENES[0] && SCENES[0].id);
   function findInitialScene(id) {
@@ -3031,7 +2984,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     var viewH = isVerticalCam ? (H / scale) : VIEW_H;
     var player = null;
     for (var pi = 0; pi < work.entities.length; pi++) {
-      if (work.entities[pi].controllable && work.entities[pi].x > -9000) { player = work.entities[pi]; break; }
+      if (work.entities[pi].controllable) { player = work.entities[pi]; break; }
     }
     var camX = state.cameraX;
     var camY = 0;
@@ -3043,14 +2996,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
       if (work.height > viewH) camY = Math.max(0, Math.min(work.height - viewH, camY));
       else camY = (work.height - viewH) / 2;
       state.cameraX = camX;
-    } else {
-      if (work.width <= viewW) camX = (work.width - viewW) / 2;
-      if (work.height > viewH) camY = Math.max(0, Math.min(work.height - viewH, (work.height - viewH) / 2));
-      else camY = (work.height - viewH) / 2;
     }
-    runtimeApi.camera.x = camX;
-    runtimeApi.camera.y = camY;
-    runtimeApi.camera.scale = scale;
 
     var sx = shake.time > 0 ? (Math.random() - 0.5) * shake.intensity : 0;
     var sy = shake.time > 0 ? (Math.random() - 0.5) * shake.intensity : 0;
@@ -3229,16 +3175,10 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
   }
 
   var runtimeApi = {
-    get scene() { return work; },
-    get state() { return state; },
-    get input() { return input; },
-    camera: { x: 0, y: 0, scale: 1 },
     getScene: function() { return work; },
     getState: function() { return state; },
     getInput: function() { return input; },
     getPlayer: function() { return findFirstOfKind(work, "player"); },
-    getScore: function() { return state.score; },
-    getLives: function() { return state.lives; },
     getEntities: function(kind) {
       if (!kind) return work.entities.filter(function(e) { return e.x > -9000; });
       return work.entities.filter(function(e) { return e.kind === kind && e.x > -9000; });
@@ -3409,11 +3349,11 @@ ${customJs}
         var stepDt = Math.min(remaining, stepCap);
         if (!state.win && !state.dead) {
           stepScene(work, input, state, stepDt, onGoalReached);
-        }
-        scripts.step(work, state, input, hooks, stepDt);
-        for (var ti = 0; ti < runtimeHooksList.length; ti++) {
-          if (typeof runtimeHooksList[ti].onTick === "function") {
-            try { runtimeHooksList[ti].onTick(runtimeApi, stepDt); } catch (err) {}
+          scripts.step(work, state, input, hooks, stepDt);
+          for (var ti = 0; ti < runtimeHooksList.length; ti++) {
+            if (typeof runtimeHooksList[ti].onTick === "function") {
+              try { runtimeHooksList[ti].onTick(runtimeApi, stepDt); } catch (err) {}
+            }
           }
         }
         if (shake.time > 0) shake.time = Math.max(0, shake.time - stepDt);

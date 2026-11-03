@@ -15,12 +15,6 @@
 //   · También acepta GET con parámetros, pero el prompt viaja en la URL y el
 //     servidor devuelve 414 a partir de ~8 KB: por eso aquí siempre se usa POST.
 
-import {
-  buildUserLanguagePromptContext,
-  compileUserLanguageLocally,
-  loadUserLanguage,
-} from "./custom-language";
-
 /** API pública integrada por defecto (Google Gemini, sin clave). */
 export const GEMINI_API_ENDPOINT = "https://prexzyapis.com/ai/gemini";
 
@@ -156,23 +150,28 @@ export function buildGeminiScriptPrompt(args: {
   projectSummary?: string;
 }): string {
   const { userRequest, engineKnowledge, targetEntityKind, projectSummary } = args;
-  const userLang = loadUserLanguage();
   return [
-    "Eres el traductor de lenguaje de programación propio e intérprete de scripts HTML5 del motor de Asternal. El código que hace los scripts debe ser 100% con HTML5 (Canvas 2D, WebAudio, eventos DOM y window.AsternalRuntime.registerHook en `compiledJs`), sin depender de programación hecha del editor. No inventes APIs.",
+    "Eres un programador del motor de Asternal. Solo puedes usar los tipos y bloques reales del motor listados abajo. No inventes APIs.",
     targetEntityKind ? `Entidad objetivo: ${targetEntityKind}.` : "",
     projectSummary ? `Resumen del proyecto:\n${projectSummary}` : "",
-    buildUserLanguagePromptContext(userLang, userRequest),
     "Conocimiento del motor:",
     engineKnowledge,
-    "Petición o código en el lenguaje del usuario:",
+    "Petición del usuario:",
     userRequest,
-    "Devuelve SOLO un JSON válido con un array de Script[] (tipo Script del conocimiento, incluyendo `compiledJs` con el código HTML5 ejecutable en `window.AsternalRuntime.registerHook`). Sin markdown, sin explicación y sin escapar las comillas.",
+    "Devuelve SOLO un JSON válido con un array de Script[] (tipo Script del conocimiento). Sin markdown, sin explicación y sin escapar las comillas.",
   ].filter(Boolean).join("\n\n");
 }
 
 /**
  * Prompt para **seguir editando un script ya existente** con instrucciones
  * nuevas.
+ *
+ * A diferencia de `buildGeminiScriptPrompt` (que crea scripts desde cero), aquí
+ * el script actual viaja completo en el prompt: la IA parte de él y aplica solo
+ * el cambio pedido, así se conservan el contexto y los cambios anteriores
+ * —también los hechos a mano— en lugar de reescribirlo todo. El editor usa
+ * además un `sessionId` por script, de modo que el servicio recuerda la
+ * conversación de ese script entre ediciones.
  */
 export function buildGeminiScriptEditPrompt(args: {
   instruction: string;
@@ -182,23 +181,21 @@ export function buildGeminiScriptEditPrompt(args: {
   projectSummary?: string;
 }): string {
   const { instruction, engineKnowledge, currentScript, targetEntityKind, projectSummary } = args;
-  const userLang = loadUserLanguage();
   return [
-    "Eres el traductor de lenguaje de programación propio e intérprete de scripts HTML5 del motor de Asternal. El código que hace los scripts debe ser 100% con HTML5 (`compiledJs` con `window.AsternalRuntime.registerHook`), sin depender de programación hecha del editor. No inventes APIs.",
-    "Estás EDITANDO un script que ya existe: devuelve ese mismo script actualizado con su código HTML5 en `compiledJs`, no uno nuevo.",
+    "Eres un programador del motor de Asternal. Solo puedes usar los tipos y bloques reales del motor listados abajo. No inventes APIs.",
+    "Estás EDITANDO un script que ya existe: devuelve ese mismo script con sus bloques cambiados, no uno nuevo.",
     targetEntityKind ? `Entidad objetivo: ${targetEntityKind}.` : "",
     projectSummary ? `Resumen del proyecto:\n${projectSummary}` : "",
-    buildUserLanguagePromptContext(userLang, instruction),
     "Conocimiento del motor:",
     engineKnowledge,
     "Script actual (estado exacto que debes conservar):",
     JSON.stringify(currentScript, null, 2),
-    "Nueva instrucción o código en el lenguaje del usuario:",
+    "Nueva instrucción de edición:",
     instruction,
     "Reglas obligatorias de la edición:",
     "- Conserva `id` y `event` exactamente como están: el evento lo controla el usuario desde el editor.",
     "- Conserva los bloques que ya existen, con sus ids y sus valores ajustados, salvo que la instrucción pida cambiarlos o quitarlos.",
-    "- Actualiza `compiledJs` con el código HTML5 completo que ejecuta la instrucción.",
+    "- Añade, modifica o quita únicamente los bloques necesarios para cumplir la instrucción.",
     "Devuelve SOLO un JSON válido con el objeto Script actualizado (uno solo, no un array). Sin markdown, sin explicación y sin escapar las comillas.",
   ].filter(Boolean).join("\n\n");
 }
@@ -548,120 +545,24 @@ export function parseAiJson<T = unknown>(value: string): T {
   throw new Error("La IA no devolvió un JSON válido.");
 }
 
-export interface ExtractedAiScriptPayload {
-  scripts: unknown[];
-  customRuntimeJs?: string;
-  synthSounds?: Record<string, unknown>;
-  explanation?: string;
-}
-
-/**
- * Extrae la lista de scripts y cualquier código JS o sonidos sintetizados de la
- * respuesta JSON de la IA, tanto si devuelve un array `[...]` directo como si
- * lo envuelve en un objeto `{ scripts: [...], customRuntimeJs: "...", synthSounds: {...} }`.
- */
-export function extractScriptsFromAiPayload(parsed: unknown): ExtractedAiScriptPayload {
-  if (Array.isArray(parsed)) {
-    return { scripts: parsed };
-  }
-  if (!parsed || typeof parsed !== "object") {
-    return { scripts: [] };
-  }
-  const obj = parsed as Record<string, unknown>;
-  const customRuntimeJs =
-    typeof obj.customRuntimeJs === "string" && obj.customRuntimeJs.trim()
-      ? obj.customRuntimeJs.trim()
-      : typeof obj.compiledJs === "string" && obj.compiledJs.trim()
-        ? obj.compiledJs.trim()
-        : typeof obj.jsCode === "string" && obj.jsCode.trim()
-          ? obj.jsCode.trim()
-          : undefined;
-  const synthSounds =
-    obj.synthSounds && typeof obj.synthSounds === "object" && !Array.isArray(obj.synthSounds)
-      ? (obj.synthSounds as Record<string, unknown>)
-      : undefined;
-  const explanation =
-    typeof obj.explanation === "string" && obj.explanation.trim()
-      ? obj.explanation.trim()
-      : typeof obj.reply === "string" && obj.reply.trim()
-        ? obj.reply.trim()
-        : undefined;
-
-  if (Array.isArray(obj.scripts)) {
-    return { scripts: obj.scripts, customRuntimeJs, synthSounds, explanation };
-  }
-  if (obj.script && typeof obj.script === "object") {
-    return {
-      scripts: Array.isArray(obj.script) ? obj.script : [obj.script],
-      customRuntimeJs,
-      synthSounds,
-      explanation,
-    };
-  }
-  if (Array.isArray(obj.data)) {
-    return { scripts: obj.data, customRuntimeJs, synthSounds, explanation };
-  }
-  if (Array.isArray(obj.result)) {
-    return { scripts: obj.result, customRuntimeJs, synthSounds, explanation };
-  }
-  if (Array.isArray(obj.entityUpdates)) {
-    const collected: unknown[] = [];
-    for (const upd of obj.entityUpdates) {
-      if (upd && typeof upd === "object") {
-        const u = upd as Record<string, unknown>;
-        if (Array.isArray(u.scriptsToAdd)) collected.push(...u.scriptsToAdd);
-        else if (Array.isArray(u.scripts)) collected.push(...u.scripts);
-      }
-    }
-    if (collected.length > 0) {
-      return { scripts: collected, customRuntimeJs, synthSounds, explanation };
-    }
-  }
-  if (typeof obj.event === "string" || Array.isArray(obj.blocks)) {
-    return { scripts: [obj], customRuntimeJs, synthSounds, explanation };
-  }
-  if (customRuntimeJs) {
-    return {
-      scripts: [
-        {
-          id: `html5-${Date.now().toString(36)}`,
-          event: "onStart",
-          blocks: [],
-          compiledJs: customRuntimeJs,
-        },
-      ],
-      customRuntimeJs,
-      synthSounds,
-      explanation,
-    };
-  }
-  return { scripts: [], customRuntimeJs, synthSounds, explanation };
-}
-
 /**
  * Solicita generación o edición de scripts manuales con IA:
  * intenta primero la ruta de servidor `/api/orion/script-ai` (Gemini oficial)
- * y recurre automáticamente a `geminiChat` si la ruta local no responde.
+ * y recurre automáticamente a `geminiChat` (Prexzy) si la ruta local no responde.
  */
 export async function requestScriptAi(
   prompt: string,
   opts: GeminiChatOptions = {},
 ): Promise<GeminiChatResult> {
-  const srvController = new AbortController();
-  const srvTimer = setTimeout(() => srvController.abort(), 18_000);
-  const onAbort = () => srvController.abort();
-  opts.signal?.addEventListener("abort", onAbort, { once: true });
-
   try {
     const res = await fetch("/api/orion/script-ai", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         prompt,
-        systemPrompt: opts.systemPrompt,
         sessionId: sessionFor(opts.sessionId),
       }),
-      signal: srvController.signal,
+      signal: opts.signal,
     });
     if (res.ok) {
       const payload = (await res.json().catch(() => null)) as {
@@ -690,24 +591,8 @@ export async function requestScriptAi(
     }
   } catch (err) {
     if (opts.signal?.aborted) throw err;
-  } finally {
-    clearTimeout(srvTimer);
-    opts.signal?.removeEventListener("abort", onAbort);
   }
-
-  const fbController = new AbortController();
-  const fbTimer = setTimeout(() => fbController.abort(), 10_000);
-  const onFbAbort = () => fbController.abort();
-  opts.signal?.addEventListener("abort", onFbAbort, { once: true });
-  try {
-    return await geminiChat([{ role: "user", content: prompt }], {
-      ...opts,
-      signal: fbController.signal,
-    });
-  } finally {
-    clearTimeout(fbTimer);
-    opts.signal?.removeEventListener("abort", onFbAbort);
-  }
+  return geminiChat([{ role: "user", content: prompt }], opts);
 }
 
 /**
@@ -726,43 +611,8 @@ export function synthesizeScriptsFromRequest(
   interval?: number;
   message?: string;
   blocks: Array<Record<string, unknown>>;
-  customLanguageCode?: string;
-  languageName?: string;
-  compiledJs?: string;
-  aiExplanation?: string;
 }> {
-  const cleanText = (requestText ?? "").trim();
-  const lower = cleanText.toLowerCase();
-
-  // Si el usuario escribió en su lenguaje inventado (bloques con ':', saltos de línea, 'SI el jugador pierde:', 'MOSTRAR sonido en el mapa', etc.)
-  if (
-    cleanText.includes(":") ||
-    cleanText.includes("\n") ||
-    /^(si|cuando|al|cada|if|when|on)\b/im.test(cleanText) ||
-    /mostrar\s+sonido.*mapa/i.test(cleanText)
-  ) {
-    const userLang = loadUserLanguage();
-    const compiled = compileUserLanguageLocally(cleanText, userLang, {
-      allowedEvents: allowedEvents as never,
-    });
-    if (compiled.compiledScripts.length > 0) {
-      return compiled.compiledScripts.map((sc) => ({
-        id: sc.id,
-        event: sc.event,
-        ...(sc.withKind ? { withKind: sc.withKind } : {}),
-        ...(sc.interval ? { interval: sc.interval } : {}),
-        ...(sc.key ? { key: sc.key } : {}),
-        ...(sc.threshold ? { threshold: sc.threshold } : {}),
-        ...(sc.message ? { message: sc.message } : {}),
-        blocks: sc.blocks as unknown as Array<Record<string, unknown>>,
-        customLanguageCode: sc.customLanguageCode || cleanText,
-        languageName: sc.languageName || userLang.name,
-        compiledJs: sc.compiledJs || compiled.compiledJs,
-        aiExplanation: sc.aiExplanation || compiled.explanation,
-      }));
-    }
-  }
-
+  const lower = (requestText ?? "").toLowerCase();
   const makeId = () => Math.random().toString(36).slice(2, 10);
   const canUse = (ev: string) => !allowedEvents?.length || allowedEvents.includes(ev);
 
@@ -773,12 +623,6 @@ export function synthesizeScriptsFromRequest(
 
   if (canUse("onTap") && !canUse("onCollide")) {
     event = /manten|hold/i.test(lower) && canUse("onHold") ? "onHold" : "onTap";
-    withKind = undefined;
-  } else if (/pierde|muere|derrota|sin\s+vida|game\s*over/i.test(lower) && canUse("onLose")) {
-    event = "onLose";
-    withKind = undefined;
-  } else if (/gana|victoria|meta/i.test(lower) && canUse("onWin")) {
-    event = "onWin";
     withKind = undefined;
   } else if (/cada\s+(\d+)\s*s|temporizador|timer|intervalo/i.test(lower) && canUse("onTimer")) {
     event = "onTimer";
@@ -824,15 +668,15 @@ export function synthesizeScriptsFromRequest(
     blocks.push({ id: makeId(), kind: "shake", value: 8 });
   }
   if (/sonido|suene|audio|efect/i.test(lower)) {
-    blocks.push({ id: makeId(), kind: "playSound", text: event === "onLose" ? "lose" : "coin" });
+    blocks.push({ id: makeId(), kind: "playSound", text: "coin" });
   }
   if (/destru|desaparec|elimin/i.test(lower)) {
     blocks.push({ id: makeId(), kind: "destroySelf" });
   }
-  if (/ganar|victoria|meta/i.test(lower) && event !== "onWin") {
+  if (/ganar|victoria|meta/i.test(lower)) {
     blocks.push({ id: makeId(), kind: "win" });
   }
-  if (/perder|game over|morir/i.test(lower) && event !== "onLose") {
+  if (/perder|game over|morir/i.test(lower)) {
     blocks.push({ id: makeId(), kind: "lose" });
   }
 
@@ -840,10 +684,6 @@ export function synthesizeScriptsFromRequest(
     blocks.push({ id: makeId(), kind: "jump", value: 420 });
   }
 
-  const userLang = loadUserLanguage();
-  const localHtml5 = compileUserLanguageLocally(cleanText, userLang, {
-    allowedEvents: allowedEvents as never,
-  });
   return [
     {
       id: makeId(),
@@ -852,10 +692,6 @@ export function synthesizeScriptsFromRequest(
       ...(interval ? { interval } : {}),
       ...(key ? { key } : {}),
       blocks,
-      customLanguageCode: cleanText,
-      languageName: userLang.name,
-      compiledJs: localHtml5.compiledJs,
-      aiExplanation: localHtml5.explanation,
     },
   ];
 }

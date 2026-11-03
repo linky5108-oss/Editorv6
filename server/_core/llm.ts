@@ -47,9 +47,9 @@ function getGeminiClient(): GoogleGenAI | null {
 }
 
 function resolveGeminiModel(requested?: string): string {
-  if (!requested || requested === "gemini-3.8-flash") return "gemini-3-flash-preview";
+  if (!requested) return "gemini-3.8-flash";
   if (requested.startsWith("gemini-")) return requested;
-  return "gemini-3-flash-preview";
+  return "gemini-3.8-flash";
 }
 
 /**
@@ -72,12 +72,7 @@ export async function invokeLLM(request: LLMRequest): Promise<LLMResponse> {
   if (ai) {
     const primaryModel = resolveGeminiModel(request.model);
     const candidateModels = Array.from(
-      new Set([
-        primaryModel,
-        "gemini-3-flash-preview",
-        "gemini-2.5-flash",
-        "gemini-3.1-flash-lite-preview",
-      ]),
+      new Set([primaryModel, "gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]),
     );
     const contents =
       conversationTurns.length > 0
@@ -137,28 +132,20 @@ export async function invokeLLM(request: LLMRequest): Promise<LLMResponse> {
     systemInstruction ? `INSTRUCCIONES DEL SISTEMA:\n${systemInstruction}` : "",
     ...conversationTurns.map((m) => `${m.role === "assistant" ? "ASISTENTE" : "USUARIO"}:\n${extractMessageText(m.content)}`),
     request.responseMimeType === "application/json"
-      ? "IMPORTANTE: Devuelve ÚNICAMENTE JSON válido, sin texto conversacional fuera del JSON."
+      ? "IMPORTANTE: Devuelve ÚNICAMENTE un objeto JSON válido, sin texto conversacional fuera del JSON."
       : "",
   ]
     .filter(Boolean)
     .join("\n\n");
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12_000);
-  let fallbackRes: Response;
-  try {
-    fallbackRes = await fetch(GEMINI_PUBLIC_FALLBACK_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt: combinedPrompt.slice(-48_000),
-        session_id: `orion-srv-${Date.now().toString(36)}`,
-      }),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
+  const fallbackRes = await fetch(GEMINI_PUBLIC_FALLBACK_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt: combinedPrompt.slice(-48_000),
+      session_id: `orion-srv-${Date.now().toString(36)}`,
+    }),
+  });
 
   const payload = (await fallbackRes.json().catch(() => null)) as {
     status?: boolean;
@@ -173,7 +160,7 @@ export async function invokeLLM(request: LLMRequest): Promise<LLMResponse> {
   }
 
   return {
-    model: payload.service || "gemini-3-flash-preview",
+    model: payload.service || "gemini-3.8-flash",
     choices: [{ message: { content: payload.response.trim() } }],
   };
 }
@@ -182,7 +169,7 @@ export async function invokeLLM(request: LLMRequest): Promise<LLMResponse> {
 export async function listLLMModels(): Promise<{ data: Array<{ id: string }> }> {
   if (process.env.GEMINI_API_KEY?.trim()) {
     return {
-      data: [{ id: "gemini-3-flash-preview" }],
+      data: [{ id: "gemini-3.8-flash" }],
     };
   }
   const forgeUrl = process.env.BUILT_IN_FORGE_API_URL?.trim();
@@ -201,6 +188,6 @@ export async function listLLMModels(): Promise<{ data: Array<{ id: string }> }> 
     }
   }
   return {
-    data: [{ id: "gemini-3-flash-preview" }],
+    data: [{ id: "gemini-3.8-flash" }],
   };
 }

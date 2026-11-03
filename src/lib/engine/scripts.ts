@@ -189,14 +189,6 @@ export interface Script {
   interval?: number;                      // onTimer (ms)
   message?: string;                       // onMessage
   blocks: Block[];
-  /** Código original escrito por el usuario en su propio lenguaje de programación inventado. */
-  customLanguageCode?: string;
-  /** Nombre del lenguaje inventado por el usuario. */
-  languageName?: string;
-  /** Código JavaScript/HTML5 compilado por la IA para el motor. */
-  compiledJs?: string;
-  /** Explicación de la traducción realizada por la IA. */
-  aiExplanation?: string;
 }
 
 export const EVENT_LABELS: Record<EventType, string> = {
@@ -904,20 +896,10 @@ function normalizedList(block: Block): Block[] {
  */
 export function normalizeScript(raw: unknown, fallbackId?: string): Script | null {
   if (!raw || typeof raw !== "object") return null;
-  const source = raw as Partial<Script> & { customRuntimeJs?: string; jsCode?: string };
-  const rawHtml5Js =
-    typeof source.compiledJs === "string" && source.compiledJs.trim()
-      ? source.compiledJs.trim()
-      : typeof source.customRuntimeJs === "string" && source.customRuntimeJs.trim()
-        ? source.customRuntimeJs.trim()
-        : typeof source.jsCode === "string" && source.jsCode.trim()
-          ? source.jsCode.trim()
-          : undefined;
+  const source = raw as Partial<Script>;
   const event = typeof source.event === "string" && source.event in EVENT_LABELS
     ? (source.event as EventType)
-    : rawHtml5Js
-      ? "onStart"
-      : null;
+    : null;
   if (!event) return null;
 
   const script: Script = {
@@ -925,7 +907,6 @@ export function normalizeScript(raw: unknown, fallbackId?: string): Script | nul
     id: typeof source.id === "string" && source.id ? source.id : fallbackId || uid(),
     event,
     blocks: blockList(source.blocks).flatMap(normalizedList),
-    ...(rawHtml5Js ? { compiledJs: rawHtml5Js } : {}),
   };
 
   // Los números de cabecera también pueden llegar como texto desde la IA.
@@ -947,142 +928,21 @@ export interface ScriptEditResult {
 
 /**
  * Aplica la respuesta de la IA al script que se estaba editando.
+ *
+ * La cabecera del script —evento y sus parámetros (`withKind`, `key`,
+ * `threshold`, `interval`, `message`)— se conserva tal cual: la IA solo aporta
+ * los bloques. Así el resultado sigue siendo el mismo script, sin perder el
+ * contexto ni los cambios previos, y el evento no cambia a espaldas del
+ * usuario. Si la IA propuso otro evento, se devuelve en `suggestedEvent` para
+ * avisarlo en el editor. Devuelve `null` si la respuesta no es usable.
  */
 export function applyScriptEdit(original: Script, edited: unknown): ScriptEditResult | null {
   const next = normalizeScript(edited, original.id);
   if (!next) return null;
   return {
-    script: {
-      ...original,
-      id: original.id,
-      blocks: next.blocks,
-      ...(next.compiledJs ? { compiledJs: next.compiledJs } : {}),
-    },
+    script: { ...original, id: original.id, blocks: next.blocks },
     suggestedEvent: next.event === original.event ? null : next.event,
   };
-}
-
-/**
- * Compila un `Script` en código HTML5 puro (`window.AsternalRuntime.registerHook`)
- * para que su ejecución dependa exclusivamente de HTML5 (Canvas 2D, WebAudio, eventos DOM)
- * y no de bloques predeterminados del editor.
- */
-export function compileScriptToHtml5Js(
-  script: Script,
-  targetEntityId?: string | null,
-  targetEntityKind?: EntityKind,
-): string {
-  if (script.compiledJs && script.compiledJs.trim().length > 0) {
-    return script.compiledJs.trim();
-  }
-  const statements: string[] = [];
-  for (const b of script.blocks ?? []) {
-    switch (b.kind) {
-      case "jump":
-        statements.push(`var e = getTarget(api); if (e) e.vy = -${Math.abs(b.value ?? 520)};`);
-        break;
-      case "setVx":
-        statements.push(`var e = getTarget(api); if (e) e.vx = ${b.value ?? 0};`);
-        break;
-      case "setVy":
-        statements.push(`var e = getTarget(api); if (e) e.vy = ${b.value ?? 0};`);
-        break;
-      case "addScore":
-        statements.push(`if (api && api.addScore) api.addScore(${b.value ?? 10});`);
-        break;
-      case "setScore":
-        statements.push(`if (api && api.setScore) api.setScore(${b.value ?? 0});`);
-        break;
-      case "addLives":
-        statements.push(`if (api && api.addLives) api.addLives(${b.value ?? 1});`);
-        break;
-      case "setLives":
-        statements.push(`if (api && api.setLives) api.setLives(${b.value ?? 3});`);
-        break;
-      case "win":
-        statements.push(`if (api && api.win) api.win();`);
-        break;
-      case "lose":
-      case "hurtPlayer":
-        statements.push(`if (api && api.lose) api.lose();`);
-        break;
-      case "destroySelf":
-        statements.push(`var e = getTarget(api); if (e && api && api.removeEntity) api.removeEntity(e.id);`);
-        break;
-      case "playSound":
-        statements.push(`if (api && api.playSound) api.playSound(${JSON.stringify(b.soundUrl || b.soundName || b.text || "powerup")});`);
-        break;
-      case "playMusic":
-        statements.push(`if (window.AsternalAudio && window.AsternalAudio.playMusic) window.AsternalAudio.playMusic(${JSON.stringify(b.soundUrl || b.soundName || b.text || "")});`);
-        break;
-      case "stopMusic":
-        statements.push(`if (window.AsternalAudio && window.AsternalAudio.stopMusic) window.AsternalAudio.stopMusic();`);
-        break;
-      case "shake":
-        statements.push(`if (api && api.shake) api.shake(${b.value ?? 8}, 0.3);`);
-        break;
-      case "teleport":
-        statements.push(`var e = getTarget(api); if (e) { e.x = ${b.x ?? 100}; e.y = ${b.y ?? 200}; }`);
-        break;
-      case "setColor":
-        statements.push(`var e = getTarget(api); if (e) e.color = ${JSON.stringify(b.color || b.text || "#38bdf8")};`);
-        break;
-      case "setSize":
-        statements.push(`var e = getTarget(api); if (e) { var f = ${b.value ?? 1.2}; e.w = Math.max(8, Math.round(e.w * f)); e.h = Math.max(8, Math.round(e.h * f)); }`);
-        break;
-      case "chase":
-        statements.push(`var e = getTarget(api); var p = api && api.getPlayer ? api.getPlayer() : null; if (e && p && e.id !== p.id) { var dx = (p.x + p.w / 2) - (e.x + e.w / 2); e.vx = dx >= 0 ? ${b.value ?? 120} : -${b.value ?? 120}; }`);
-        break;
-      case "say":
-      case "sayForSecs":
-      case "thinkForSecs":
-        statements.push(`var e = getTarget(api); if (e) { e._bubbleText = ${JSON.stringify(b.text || "¡Listo!")}; e._bubbleKind = "say"; e._bubbleUntil = ((api && api.state && api.state.time) || 0) + 2.5; }`);
-        break;
-      default:
-        break;
-    }
-  }
-  const body = statements.join("\n        ") || `if (api && api.playSound) api.playSound("powerup");`;
-  const tgtId = targetEntityId ? JSON.stringify(targetEntityId) : "null";
-  const tgtKind = targetEntityKind ? JSON.stringify(targetEntityKind) : "null";
-  const ev = script.event || "onStart";
-
-  let hookProp = `onTick: function(api, dt) { if (!triggered) { triggered = true; ${body} } }`;
-  if (ev === "onUpdate") {
-    hookProp = `onTick: function(api, dt) { ${body} }`;
-  } else if (ev === "onLose") {
-    hookProp = `onTick: function(api, dt) { var dead = Boolean(api && api.state && (api.state.dead || api.state.lives <= 0)); if (dead && !triggered) { triggered = true; ${body} } else if (!dead) { triggered = false; } }`;
-  } else if (ev === "onWin") {
-    hookProp = `onTick: function(api, dt) { var won = Boolean(api && api.state && api.state.win); if (won && !triggered) { triggered = true; ${body} } else if (!won) { triggered = false; } }`;
-  } else if (ev === "onTimer") {
-    const iv = Math.max(0.1, (script.interval ?? 1000) / 1000);
-    hookProp = `onTick: function(api, dt) { acc += (dt || 0.016); if (acc >= ${iv}) { acc = 0; ${body} } }`;
-  } else if (ev === "onCollide") {
-    const wk = script.withKind && script.withKind !== "any" ? JSON.stringify(script.withKind) : "null";
-    hookProp = `onCollide: function(a, b, api) { var wk = ${wk}; if (!wk || (a && a.kind === wk) || (b && b.kind === wk)) { ${body} } }`;
-  } else if (ev === "onKeyDown") {
-    hookProp = `onKeyDown: function(code, key, api) { ${body} }`;
-  }
-
-  return [
-    `// Script HTML5 (${script.id})`,
-    `(function() {`,
-    `  if (typeof window === "undefined" || !window.AsternalRuntime) return;`,
-    `  var triggered = false, acc = 0;`,
-    `  var targetId = ${tgtId}, targetKind = ${tgtKind};`,
-    `  function getTarget(api) {`,
-    `    if (!api) return null;`,
-    `    var list = typeof api.getEntities === "function" ? api.getEntities() : [];`,
-    `    if (targetId) { for (var i = 0; i < list.length; i++) if (list[i].id === targetId) return list[i]; }`,
-    `    if (targetKind) { for (var j = 0; j < list.length; j++) if (list[j].kind === targetKind) return list[j]; }`,
-    `    return typeof api.getPlayer === "function" ? api.getPlayer() : (list[0] || null);`,
-    `  }`,
-    `  window.AsternalRuntime.registerHook({`,
-    `    id: ${JSON.stringify(script.id)},`,
-    `    ${hookProp}`,
-    `  });`,
-    `})();`,
-  ].join("\n");
 }
 
 /** Lista de scripts normalizados: acepta un array, un objeto Script único o un envoltorio `{ scripts }` / `{ script }`. */
@@ -1269,7 +1129,6 @@ export function createScriptRunner(): ScriptRunner {
         emitMessage: (message: string) => uiMessages.add(message),
       };
       for (const script of scripts) {
-        if (script.compiledJs && script.compiledJs.trim().length > 0) continue;
         const key = `${element.id}|${script.id}`;
         // Un script que ya está esperando no se reinicia: se reanuda él solo.
         if (uiSuspended.has(key)) continue;
@@ -1295,7 +1154,6 @@ export function createScriptRunner(): ScriptRunner {
       // Mientras un script espera, su evento no lo reinicia: se reanuda donde
       // se quedó (ver el paso de reanudación), nunca desde el principio.
       const run = (script: Script, self: Entity, other?: Entity) => {
-        if (script.compiledJs && script.compiledJs.trim().length > 0) return;
         const key = keyFor(script, self);
         if (suspended.has(key)) return;
         const ctx: ExecCtx = { self, other, scene, state, hooks, input, clock, emitMessage: (message: string) => messages.add(message) };

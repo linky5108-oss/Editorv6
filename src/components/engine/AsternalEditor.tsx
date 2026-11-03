@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Settings, Layers, Copy, X, Eye, EyeOff, Lock, Unlock, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Trash2, Plus, Upload, Home, MousePointer2, Boxes, Eraser, SlidersHorizontal, Image as ImageIcon, Layers3, Play, LibraryBig, Save, Pencil, Sparkles, Code2 } from "lucide-react";
+import { Settings, Layers, Copy, X, Eye, EyeOff, Lock, Unlock, ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, Trash2, Plus, Upload, Home, MousePointer2, Boxes, Eraser, SlidersHorizontal, Image as ImageIcon, Layers3, Play, LibraryBig, Save, Pencil, Sparkles } from "lucide-react";
 import { schedulePushToCloud, scheduleAssetLibraryPush, pullAssetLibraryFromCloud, activateCloudProjectIfBlank } from "@/lib/engine/cloud-sync";
 import { supabase } from "@/integrations/supabase/client";
 import { Link, useRouter } from "@tanstack/react-router";
@@ -312,7 +312,7 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
 
   if (playing) {
     return (
-      <div data-no-drawably className="fixed inset-0 z-[100] h-dvh w-full bg-[#0b1e3f] overflow-hidden">
+      <div className="relative h-screen w-full">
         <GameRuntime
           scene={activeScene}
           scenes={playProject.scenes}
@@ -373,8 +373,8 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
 
     <div className="flex h-full flex-1 flex-col overflow-hidden min-w-0">
       {/* Top bar */}
-      <header className="editor-bar flex flex-nowrap items-center justify-between gap-2 py-2 px-3 border-b">
-        <div className="flex flex-1 min-w-0 items-center gap-2.5">
+      <header className="editor-bar flex flex-wrap items-center justify-between gap-2 py-2 px-3 border-b">
+        <div className="flex min-w-0 items-center gap-2.5">
           {!isTablet && <Logo />}
           <div className="min-w-0">
             <div className="flex items-center gap-2"><span className="truncate font-display text-sm font-semibold text-foreground leading-none">{project.name || "Proyecto sin título"}</span><span className="shrink-0 rounded-md bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold tracking-wider text-primary">STUDIO</span></div>
@@ -387,8 +387,10 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
           </div>
         </div>
 
-        {/* Botones independientes en una sola fila sin partirse en dos líneas */}
-        <div className="ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-1 sm:gap-1.5">
+        {/* Botones independientes: la barra superior agrupa navegación, ayuda y
+            las acciones principales. En móvil se envuelve a una segunda fila en
+            lugar de recortar botones. */}
+        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1 sm:gap-1.5">
           <Link
             to="/"
             aria-label="Ir al inicio"
@@ -828,8 +830,8 @@ function InspectorPanel({
           className="w-full px-3 py-2.5 rounded-md bg-primary/10 border border-accent/50 text-primary-glow font-display text-xs tracking-widest flex items-center justify-between glow-border"
         >
           <span className="inline-flex items-center gap-1.5">
-            <Code2 size={14} className="text-primary" />
-            <span>SCRIPT MANUAL</span>
+            <Sparkles size={14} className="text-primary" />
+            <span>SCRIPT MANUAL · IA</span>
           </span>
           <span className="font-mono text-[10px] opacity-80">{totalSceneScripts}</span>
         </button>
@@ -1407,14 +1409,14 @@ function SettingsPanel({ project, onChange, beta = false, onOpenScriptManual }: 
         <div className="flex items-center justify-between gap-2">
           <div>
             <div className="text-xs font-display font-bold tracking-wider text-primary">
-              ♪ BIBLIOTECA DE SONIDOS Y MÚSICA
+              ♪ BIBLIOTECA DE SONIDOS Y MÚSICA (ASSETS)
             </div>
             <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">
-              Guarda música y efectos en tu biblioteca. Cuando pidas poner música o sonido en Scripts Manuales, el motor los detectará y te preguntará cuál quieres usar.
+              Guarda música y efectos en tus assets. Cuando pidas poner música o sonido en Scripts Manuales, el motor los detectará y te preguntará cuál quieres usar.
             </p>
           </div>
           <span className="shrink-0 rounded-md bg-primary/10 border border-primary/30 px-2 py-0.5 text-[10px] font-mono font-semibold text-primary">
-            {audioLibrary.length} {audioLibrary.length === 1 ? "pista" : "pistas"}
+            {audioLibrary.length} {audioLibrary.length === 1 ? "asset" : "assets"}
           </span>
         </div>
 
@@ -1432,7 +1434,7 @@ function SettingsPanel({ project, onChange, beta = false, onOpenScriptManual }: 
               }}
             />
             <span className="block text-center py-2 px-2 rounded-lg bg-primary/10 border border-primary/35 text-primary font-display font-semibold text-[10px] tracking-widest cursor-pointer hover:bg-primary/15 active:scale-[0.98] transition">
-              + SUBIR MÚSICA
+              + SUBIR MÚSICA (ASSET)
             </span>
           </label>
 
@@ -1449,7 +1451,7 @@ function SettingsPanel({ project, onChange, beta = false, onOpenScriptManual }: 
               }}
             />
             <span className="block text-center py-2 px-2 rounded-lg border border-line-strong bg-card text-ink-2 font-display font-semibold text-[10px] tracking-widest cursor-pointer hover:border-primary/40 hover:text-primary active:scale-[0.98] transition">
-              + SUBIR SONIDO
+              + SUBIR SONIDO (ASSET)
             </span>
           </label>
         </div>
@@ -1685,10 +1687,10 @@ function RuntimeEditorBridgePanel({
 
   return (
     <div className="space-y-3 pt-2">
-      <SectionTitle>SCRIPTS E INTERFAZ DEL JUEGO</SectionTitle>
+      <SectionTitle>SCRIPTS MANUALES E INTERFAZ DEL JUEGO · IA</SectionTitle>
       <div className="panel rounded-xl p-3 space-y-3 border border-primary/30">
         <p className="text-[11px] leading-relaxed text-muted-foreground">
-          Gestiona toda la lógica, comportamientos e interfaz del juego desde el panel de <strong>Scripts</strong>.
+          Gestiona toda la lógica, comportamientos e interfaz del juego desde el panel de <strong>Scripts Manuales</strong>.
         </p>
 
         {onOpenScriptManual && (
@@ -1698,8 +1700,8 @@ function RuntimeEditorBridgePanel({
             data-testid="open-settings-script-manual-btn"
             className="w-full py-2.5 px-3 rounded-lg btn-grad text-primary-foreground font-display font-semibold text-xs tracking-widest active:scale-[0.98] transition flex items-center justify-center gap-1.5"
           >
-            <Code2 size={14} />
-            <span>ABRIR SCRIPTS</span>
+            <Sparkles size={14} />
+            <span>ABRIR SCRIPTS MANUALES (IA)</span>
           </button>
         )}
 
@@ -2391,20 +2393,20 @@ function ScriptsButton({
         className="w-full px-3 py-2.5 rounded-md bg-primary/10 border border-accent/50 text-primary-glow font-display text-xs tracking-widest flex items-center justify-between glow-border"
       >
         <span className="inline-flex items-center gap-1.5">
-          <Code2 size={13} className="text-primary" />
-          <span>SCRIPT MANUAL</span>
+          <Sparkles size={13} className="text-primary" />
+          <span>SCRIPT MANUAL · IA</span>
         </span>
         <span className="font-mono text-[10px] opacity-80">{count} SCRIPTS</span>
       </button>
 
       {open && (
         <ScriptEditor
-          scripts={entity.scripts ?? []}
+          scripts={entity.scripts}
           ownerLabel={entityKindLabel(entity)}
           aiTargetKind={entity.kind}
           aiSummary={`Entidad ${entityKindLabel(entity)} en ${entity.x},${entity.y} ${entity.w}x${entity.h}.`}
           onOpenFullAiStudio={onOpenScriptManual}
-          onChange={(nextScripts) => onUpdate({ scripts: nextScripts })}
+          onChange={onUpdate}
           onClose={() => setOpen(false)}
         />
       )}
