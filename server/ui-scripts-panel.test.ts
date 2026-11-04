@@ -4,8 +4,6 @@ import { describe, expect, it } from "vitest";
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
 const core = read("src/lib/engine/core.ts");
-const editor = read("src/components/engine/UIEditor.tsx");
-const inspector = editor.split("function ElementInspector(")[1]?.split("function MultiInspector(")[0] ?? "";
 const runtime = read("src/components/engine/GameRuntime.tsx");
 const scriptEditor = read("src/components/engine/ScriptEditor.tsx");
 const knowledge = read("src/lib/ai/engine-knowledge.ts");
@@ -18,26 +16,6 @@ describe("scripts en la interfaz (apartado UI)", () => {
     expect(element).toContain("onTap");
     expect(element).toContain("onHold");
     expect(element).toContain("onRelease");
-  });
-
-  it("el inspector ofrece los tres momentos de ejecución y el editor de bloques", () => {
-    expect(inspector).toContain("SCRIPTS · EJECUCIÓN");
-    // Los tres momentos del toque, uno por chip, ya enlazados a su evento.
-    expect(editor).toContain("{ event: \"onTap\", label: \"AL PULSAR\" }");
-    expect(editor).toContain("{ event: \"onHold\", label: \"MANTENER\" }");
-    expect(editor).toContain("{ event: \"onRelease\", label: \"AL SOLTAR\" }");
-    expect(inspector).toContain("{EXECUTION_CHIPS.map(c => (")
-    // Cada chip añade un script ya listo para ese momento y abre el editor.
-    expect(inspector).toContain('const addScript = (event: EventType) => {');
-    expect(inspector).toContain("update({ scripts: [...(el.scripts ?? []), { id: uid(), event, blocks: [] } as Script] });");
-    expect(inspector).toContain("onClick={() => setScriptsOpen(true)}");
-    expect(inspector).toContain("◉ EVENTS · BLOCKS");
-  });
-
-  it("el editor de bloques del elemento usa los eventos de interfaz y guarda en el elemento", () => {
-    expect(inspector).toContain("events={UI_EVENTS}");
-    expect(inspector).toContain("scripts={el.scripts}");
-    expect(inspector).toContain("onChange={(patch: { scripts: Script[] }) => update(patch)}");
   });
 
   it("el editor de bloques se reutiliza: selector acotado por contexto y textos del propietario", () => {

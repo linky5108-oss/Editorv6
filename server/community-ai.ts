@@ -223,7 +223,7 @@ async function getOrionModel(): Promise<string> {
         ?? ids.find(id => id.startsWith("claude-haiku"))
         ?? ids.find(id => id.startsWith("gpt-5"))
         ?? ids[0]
-        ?? "gemini-3.8-flash";
+        ?? "gemini-3-flash-preview";
     });
   }
   return selectedModel;
@@ -368,6 +368,9 @@ REGLAS OBLIGATORIAS PARA MODIFICAR EL JUEGO Y CONECTARLO AL EDITOR NORMAL:
    - Si el usuario ya tenía código en "currentCustomRuntimeJs" y pide añadir otra mecánica, conserva o integra la lógica anterior o usa "appendRuntimeJs": true. Si pide reemplazar o corregir la mecánica anterior, usa "appendRuntimeJs": false.
 7. Si el usuario pide sonidos o efectos de audio:
    - Define los sonidos en "synthSounds" (ej: { "laser": { "name": "laser", "wave": "sawtooth", "freq": 780, "endFreq": 160, "duration": 0.18, "volume": 0.35 } }) y dispáralos con api.playSound("synth:laser") en "customRuntimeJs" o en bloques playSound.
+8. SISTEMA DE LENGUAJE DE PROGRAMACIÓN INVENTADO POR EL USUARIO:
+   - Cada usuario puede inventar su propio lenguaje de programación con sus propias instrucciones, palabras y reglas de sintaxis (por ejemplo: "SI el jugador pierde:\\nMOSTRAR sonido en el mapa").
+   - Actúa como el traductor/compilador oficial: interpreta lo que el usuario escribió en su lenguaje inventado y conviértelo en código JavaScript/HTML5 funcional en "customRuntimeJs" (usando window.AsternalRuntime.registerHook y window.AsternalAudio) y en bloques del motor dentro de "entityUpdates" ("scriptsToAdd").
 
 Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
 {

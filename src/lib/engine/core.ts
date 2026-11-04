@@ -400,6 +400,27 @@ export interface CustomRuntimeConfig {
   customHtmlOverride?: string | null;
   /** Historial de conversación con Orión asociado a este proyecto. */
   orionHistory?: OrionHistoryItem[];
+  /** Definición del lenguaje de programación propio inventado por el usuario y sus programas compilados. */
+  userLanguage?: {
+    name: string;
+    syntaxRules: string;
+    dictionary: Array<{
+      id: string;
+      keyword: string;
+      meaning: string;
+      category: "evento" | "condicion" | "accion" | "regla";
+    }>;
+    programs: Array<{
+      id: string;
+      title: string;
+      sourceCode: string;
+      compiledJs: string;
+      compiledScripts?: Script[];
+      explanation: string;
+      targetEntityId?: string | null;
+      updatedAt: number;
+    }>;
+  };
 }
 
 export interface AudioAsset {
