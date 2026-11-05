@@ -16,7 +16,6 @@
 //     servidor devuelve 414 a partir de ~8 KB: por eso aquí siempre se usa POST.
 
 import {
-  buildUserLanguagePromptContext,
   compileUserLanguageLocally,
   loadUserLanguage,
 } from "./custom-language";
@@ -156,17 +155,24 @@ export function buildGeminiScriptPrompt(args: {
   projectSummary?: string;
 }): string {
   const { userRequest, engineKnowledge, targetEntityKind, projectSummary } = args;
-  const userLang = loadUserLanguage();
   return [
-    "Eres el traductor de lenguaje de programación propio e intérprete de scripts HTML5 del motor de Asternal. El código que hace los scripts debe ser 100% con HTML5 (Canvas 2D, WebAudio, eventos DOM y window.AsternalRuntime.registerHook en `compiledJs`), sin depender de programación hecha del editor. No inventes APIs.",
+    "Eres el programador de scripts HTML5 de Asternal. Debes escribir un script HTML5 REAL en JavaScript puro dentro del campo OBLIGATORIO `compiledJs` de cada objeto `Script`, dejando `\"blocks\": []`.",
+    "PROHIBIDO inventar líneas de código, mecánicas, efectos o variables que el usuario NO haya pedido. PROHIBIDO emitir plantillas simuladas, placeholders, círculos con texto o llamadas a métodos que no existen. Programa ÚNICAMENTE lo solicitado por el usuario con las APIs reales de HTML5 del motor.",
     targetEntityKind ? `Entidad objetivo: ${targetEntityKind}.` : "",
     projectSummary ? `Resumen del proyecto:\n${projectSummary}` : "",
-    buildUserLanguagePromptContext(userLang, userRequest),
+    "API real del motor HTML5 disponible en `compiledJs` (NO inventes otros métodos ni propiedades):",
+    "- `window.AsternalRuntime.registerHook({ id, onInit(api), onTick(api, dt), onCollide(a, b, api), onKeyDown(code, key, api), onKeyUp(code, key, api), onRender(ctx, api), onRenderOverlay(ctx, api, W, H) })`",
+    "- `api.getPlayer()` devuelve la entidad del jugador (`{ id, kind, x, y, w, h, width, height, vx, vy, onGround, grounded, color, facing, solid, gravity, controllable }`).",
+    "- `api.getEntities(kind?)` devuelve las entidades reales de la escena (`player`, `enemy`, `coin`, `platform`, `goal`, `decor`). Propiedades: `x`, `y`, `w`, `h`, `vx`, `vy`, `onGround`, `grounded`, `color`, `solid`, `gravity`, `visible`, `opacity`, `patrol`, `moving`, `spring`, `crumble`.",
+    "- `api.spawnEntity(kind, overrides)` crea una entidad real (`kind`: `\"coin\"` | `\"enemy\"` | `\"platform\"` | `\"goal\"` | `\"decor\"`); `api.removeEntity(id)` la elimina. Para partículas usa `api.emitBurst(x, y, color, count)`.",
+    "- `api.physics` permite modificar `baseSpeed` (220), `jumpForce` (520), `terminalVelocity` (1200).",
+    "- `api.getInput()` devuelve `{ left, right, jump, keys }`.",
+    "- `api.addScore(delta)`, `api.addLives(delta)`, `api.setGravity(g)`, `api.setBg(color)`, `api.shake(intensity, duration)`, `api.emitBurst(x, y, color, count)`, `api.playSound(name)`, `api.win()`, `api.lose()`.",
     "Conocimiento del motor:",
     engineKnowledge,
-    "Petición o código en el lenguaje del usuario:",
+    "Petición o código del usuario:",
     userRequest,
-    "Devuelve SOLO un JSON válido con un array de Script[] (tipo Script del conocimiento, incluyendo `compiledJs` con el código HTML5 ejecutable en `window.AsternalRuntime.registerHook`). Sin markdown, sin explicación y sin escapar las comillas.",
+    'Devuelve SOLO un JSON válido con un array de Script[] donde CADA elemento tiene `"blocks": []`, un `"event"` válido (`"onStart"` | `"onUpdate"` | `"onCollide"` | `"onKeyDown"` | `"onTimer"` | `"onWin"` | `"onLose"`) y `"compiledJs"` con el código JavaScript HTML5 exacto, sin inventar líneas adicionales. Ejemplo: `[{"id":"s1","event":"onUpdate","blocks":[],"compiledJs":"window.AsternalRuntime.registerHook({ ... });"}]`. Sin markdown, sin explicación y sin escapar las comillas.',
   ].filter(Boolean).join("\n\n");
 }
 
@@ -182,23 +188,20 @@ export function buildGeminiScriptEditPrompt(args: {
   projectSummary?: string;
 }): string {
   const { instruction, engineKnowledge, currentScript, targetEntityKind, projectSummary } = args;
-  const userLang = loadUserLanguage();
   return [
-    "Eres el traductor de lenguaje de programación propio e intérprete de scripts HTML5 del motor de Asternal. El código que hace los scripts debe ser 100% con HTML5 (`compiledJs` con `window.AsternalRuntime.registerHook`), sin depender de programación hecha del editor. No inventes APIs.",
-    "Estás EDITANDO un script que ya existe: devuelve ese mismo script actualizado con su código HTML5 en `compiledJs`, no uno nuevo.",
+    "Eres el programador de scripts HTML5 de Asternal. Estás EDITANDO un script HTML5 real que ya existe: devuelve ese mismo script actualizado con su código JavaScript/HTML5 real y exacto en `compiledJs` y `\"blocks\": []`. No inventes APIs ni líneas de código que el usuario no haya pedido.",
     targetEntityKind ? `Entidad objetivo: ${targetEntityKind}.` : "",
     projectSummary ? `Resumen del proyecto:\n${projectSummary}` : "",
-    buildUserLanguagePromptContext(userLang, instruction),
     "Conocimiento del motor:",
     engineKnowledge,
-    "Script actual (estado exacto que debes conservar):",
+    "Script actual (estado exacto que debes conservar/actualizar):",
     JSON.stringify(currentScript, null, 2),
-    "Nueva instrucción o código en el lenguaje del usuario:",
+    "Nueva instrucción o código del usuario:",
     instruction,
     "Reglas obligatorias de la edición:",
-    "- Conserva `id` y `event` exactamente como están: el evento lo controla el usuario desde el editor.",
+    "- Conserva `id` y `event` exactamente como están.",
     "- Conserva los bloques que ya existen, con sus ids y sus valores ajustados, salvo que la instrucción pida cambiarlos o quitarlos.",
-    "- Actualiza `compiledJs` con el código HTML5 completo que ejecuta la instrucción.",
+    "- Incluye obligatoriamente `compiledJs` con el código JavaScript/HTML5 real y completo actualizado, sin agregar lógica inventada.",
     "Devuelve SOLO un JSON válido con el objeto Script actualizado (uno solo, no un array). Sin markdown, sin explicación y sin escapar las comillas.",
   ].filter(Boolean).join("\n\n");
 }
@@ -390,7 +393,7 @@ function repairJsonSyntax(
         isClosing =
           /^\s*\]/.test(rest) ||
           /^\s*,\s*\]/.test(rest) ||
-          /^\s*,\s*(?:["{\[\d-]|true\b|false\b|null\b)/.test(rest);
+          /^\s*,\s*(?:["{[\d-]|true\b|false\b|null\b)/.test(rest);
       }
       if (isClosing) {
         inString = false;
@@ -587,12 +590,35 @@ export function extractScriptsFromAiPayload(parsed: unknown): ExtractedAiScriptP
         ? obj.reply.trim()
         : undefined;
 
+  const enrichScriptsWithRuntimeJs = (list: unknown[]): unknown[] => {
+    if (!customRuntimeJs) return list;
+    return list.map((item, idx) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+      const rec = item as Record<string, unknown>;
+      const existingJs = typeof rec.compiledJs === "string" ? rec.compiledJs.trim() : "";
+      if (
+        !existingJs ||
+        (idx === 0 &&
+          customRuntimeJs.includes("registerHook") &&
+          !existingJs.includes("registerHook"))
+      ) {
+        return { ...rec, compiledJs: customRuntimeJs };
+      }
+      return item;
+    });
+  };
+
   if (Array.isArray(obj.scripts)) {
-    return { scripts: obj.scripts, customRuntimeJs, synthSounds, explanation };
+    return {
+      scripts: enrichScriptsWithRuntimeJs(obj.scripts),
+      customRuntimeJs,
+      synthSounds,
+      explanation,
+    };
   }
   if (obj.script && typeof obj.script === "object") {
     return {
-      scripts: Array.isArray(obj.script) ? obj.script : [obj.script],
+      scripts: enrichScriptsWithRuntimeJs(Array.isArray(obj.script) ? obj.script : [obj.script]),
       customRuntimeJs,
       synthSounds,
       explanation,

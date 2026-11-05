@@ -8,7 +8,6 @@ import {
 import { useEffect } from "react";
 
 import { reportLovableError } from "../lib/lovable-error-reporting";
-import { DrawablyThemeProvider } from "../lib/ui/drawably-theme";
 
 function NotFoundComponent() {
   return (
@@ -78,6 +77,7 @@ function RootComponent() {
   // (Chrome/«Google») tapaba la interfaz y no aportaba nada aquí. Se conserva
   // dentro de campos de texto para no romper pegar/cortar/seleccionar.
   useEffect(() => {
+    document.documentElement.removeAttribute("data-theme-style");
     const blockContextMenu = (e: MouseEvent) => {
       const el = e.target as HTMLElement | null;
       if (el?.closest("input, textarea, [contenteditable='true']")) return;
@@ -89,7 +89,6 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <DrawablyThemeProvider />
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       <Outlet />
     </QueryClientProvider>

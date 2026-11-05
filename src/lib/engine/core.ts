@@ -930,6 +930,24 @@ export function stepScene(scene: Scene, input: RuntimeInput, state: RuntimeState
   // funcione desde el primer fotograma; si no, un hijo perdería ese primer
   // tramo del recorrido de su padre.
   for (const e of scene.entities) {
+    const ext = e as Entity & { width?: number; height?: number; life?: number; lifetime?: number };
+    if (typeof ext.width === "number" && Number.isFinite(ext.width) && ext.width !== e.w) e.w = Math.max(4, ext.width);
+    if (typeof ext.height === "number" && Number.isFinite(ext.height) && ext.height !== e.h) e.h = Math.max(4, ext.height);
+    if (!Number.isFinite(e.x)) e.x = Number.isFinite(e._px) ? e._px! : 100;
+    if (!Number.isFinite(e.y)) e.y = Number.isFinite(e._py) ? e._py! : 100;
+    if (!Number.isFinite(e.w) || e.w <= 0) e.w = 32;
+    if (!Number.isFinite(e.h) || e.h <= 0) e.h = 32;
+    if (!Number.isFinite(e.vx)) e.vx = 0;
+    if (!Number.isFinite(e.vy)) e.vy = 0;
+    ext.width = e.w;
+    ext.height = e.h;
+    if (typeof ext.life === "number" && Number.isFinite(ext.life)) {
+      ext.life -= dt;
+      if (ext.life <= 0) e.x = -99999;
+    } else if (typeof ext.lifetime === "number" && Number.isFinite(ext.lifetime)) {
+      ext.lifetime -= dt;
+      if (ext.lifetime <= 0) e.x = -99999;
+    }
     if (e._px === undefined) { e._px = e.x; e._py = e.y; }
   }
 
@@ -1130,8 +1148,12 @@ export function stepScene(scene: Scene, input: RuntimeInput, state: RuntimeState
   // Persist grounded flag + floor entity for next-frame predictive checks
   for (const e of scene.entities) {
     if (e.kind === "platform") continue;
-    (e as Entity & { _grounded?: boolean })._grounded = grounded.has(e.id);
-    (e as Entity & { _floor?: Entity | undefined })._floor = groundedOn.get(e.id);
+    const isGrounded = grounded.has(e.id);
+    const ext = e as Entity & { _grounded?: boolean; grounded?: boolean; onGround?: boolean; _floor?: Entity | undefined };
+    ext._grounded = isGrounded;
+    ext.grounded = isGrounded;
+    ext.onGround = isGrounded;
+    ext._floor = groundedOn.get(e.id);
   }
 
 

@@ -18,7 +18,11 @@ import {
   requestScriptAi,
   synthesizeScriptsFromRequest,
 } from "@/lib/ai/gemini-provider";
-import { compileUserLanguageLocally, loadUserLanguage } from "@/lib/ai/custom-language";
+import {
+  compileUserLanguageLocally,
+  loadUserLanguage,
+  sanitizeOrUpgradeHtml5ScriptJs,
+} from "@/lib/ai/custom-language";
 
 interface ScriptEditorProps {
   scripts?: Script[];
@@ -65,15 +69,15 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in"
+      className="fixed inset-0 z-50 bg-black/45 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-fade-in"
       onClick={onClose}
     >
       <div
         role="dialog"
-        className="w-full sm:max-w-2xl max-h-[92vh] rounded-t-3xl sm:rounded-2xl flex flex-col overflow-hidden border border-line-strong bg-card text-foreground shadow-2xl"
+        className="glass-menu w-full sm:max-w-2xl max-h-[92vh] rounded-t-3xl sm:rounded-2xl flex flex-col overflow-hidden border text-foreground shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-line bg-card">
+        <div className="editor-bar flex items-center justify-between px-4 py-3 border-b">
           <div className="flex items-center gap-2">
             <Code2 size={15} className="text-primary" />
             <div className="font-display text-sm font-bold text-foreground">
@@ -82,7 +86,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-lg bg-card border border-line-strong grid place-items-center text-muted-foreground hover:text-foreground"
+            className="glass-control w-8 h-8 rounded-lg grid place-items-center text-muted-foreground hover:text-foreground"
             aria-label="Cerrar"
           >
             <X size={16} />
@@ -91,7 +95,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
 
         <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
           {/* Cuadro de scripts HTML5 */}
-          <div className="rounded-xl border border-line-strong bg-surface-2/40 p-3 space-y-2.5">
+          <div className="glass-surface rounded-xl p-3 space-y-2.5">
             <div className="flex items-center justify-between px-1">
               <span className="text-[10px] font-display font-bold uppercase tracking-widest text-primary">
                 Scripts HTML5 ({scripts.length})
@@ -99,24 +103,29 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
             </div>
 
             {scripts.length === 0 && (
-              <div className="text-center py-6 px-4 rounded-xl border border-dashed border-line-strong bg-card text-xs text-muted-foreground">
+              <div className="text-center py-6 px-4 rounded-xl border border-dashed border-line-strong text-xs text-muted-foreground">
                 Sin scripts activos.
               </div>
             )}
 
             {scripts.map((s, si) => {
-              const html5Code = s.compiledJs?.trim() || compileScriptToHtml5Js(s, undefined, effectiveKind);
+              const html5Code = sanitizeOrUpgradeHtml5ScriptJs(
+                s.compiledJs?.trim() || compileScriptToHtml5Js(s, undefined, effectiveKind),
+                s.customLanguageCode,
+                undefined,
+                effectiveKind,
+              );
               return (
                 <div
                   key={s.id}
-                  className="rounded-xl p-3 space-y-2.5 border border-line-strong bg-card"
+                  className="glass-surface rounded-xl p-3 space-y-2.5"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/30">
                         #{si + 1}
                       </span>
-                      <span className="text-[10px] font-display font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-surface-2 border border-line text-foreground">
+                      <span className="text-[10px] font-display font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-primary/10 border border-primary/25 text-primary">
                         HTML5
                       </span>
                     </div>
@@ -131,7 +140,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                         className={`h-7 px-2.5 rounded-lg border flex items-center gap-1 text-[10px] font-display tracking-wider transition ${
                           editingScriptId === s.id
                             ? "btn-grad text-primary-foreground border-transparent font-bold"
-                            : "bg-card border-line-strong text-foreground hover:bg-muted/60"
+                            : "glass-control text-foreground"
                         }`}
                       >
                         EDITAR
@@ -146,11 +155,12 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                     </div>
                   </div>
 
-                  {s.customLanguageCode && (
-                    <pre className="rounded-lg bg-surface-2/40 border border-line px-2.5 py-2 font-mono text-[11px] text-foreground whitespace-pre-wrap">
-                      {s.customLanguageCode}
-                    </pre>
-                  )}
+                  {s.customLanguageCode &&
+                    s.customLanguageCode.trim() !== html5Code.trim() && (
+                      <pre className="rounded-lg bg-surface-2/40 border border-line px-2.5 py-2 font-mono text-[11px] text-foreground whitespace-pre-wrap">
+                        {s.customLanguageCode}
+                      </pre>
+                    )}
 
                   <pre className="max-h-40 overflow-y-auto rounded-lg bg-background/80 border border-line px-2.5 py-2 font-mono text-[10px] text-muted-foreground whitespace-pre-wrap">
                     {html5Code}
@@ -210,36 +220,59 @@ function ScriptCodeBox({
     const controller = new AbortController();
     abortRef.current = controller;
     try {
+      const strippedHtmlScript = code
+        .replace(/^<script[^>]*>/i, "")
+        .replace(/<\/script>$/i, "")
+        .trim();
+      const isDirectJs =
+        /(?:window\.AsternalRuntime|registerHook|document\.getElementById|requestAnimationFrame|\b(?:const|let|var|function)\s+[a-zA-Z_$]|\bapi\.(?:getPlayer|getEntities|spawnEntity|addScore|addLives|setGravity|setBg|shake|playSound)\b)/i.test(
+          strippedHtmlScript,
+        );
+
       const localCompiled = compileUserLanguageLocally(code, userLanguage, {
         targetEntityKind: targetKind,
         allowedEvents,
       });
 
       let valid: Script[] = [];
-      let aiCustomJs = "";
+      let aiCustomJs = isDirectJs ? strippedHtmlScript : "";
 
-      try {
-        const prompt = buildGeminiScriptPrompt({
-          userRequest: code,
-          engineKnowledge: ENGINE_KNOWLEDGE,
-          targetEntityKind: targetKind,
-          projectSummary,
-        });
-        const res = await requestScriptAi(prompt, {
-          sessionId: `new-${targetKind ?? "entity"}`,
-          signal: controller.signal,
-        });
-        const parsed = parseAiJson<unknown>(res.text);
-        const extracted = extractScriptsFromAiPayload(parsed);
-        if (extracted.customRuntimeJs) aiCustomJs = extracted.customRuntimeJs;
-        const normalized = normalizeScripts(extracted.scripts).filter((s) =>
-          allowedEvents.includes(s.event),
-        );
-        if (normalized.length > 0) {
-          valid = normalized;
+      if (!isDirectJs) {
+        try {
+          const prompt = buildGeminiScriptPrompt({
+            userRequest: code,
+            engineKnowledge: ENGINE_KNOWLEDGE,
+            targetEntityKind: targetKind,
+            projectSummary,
+          });
+          const res = await requestScriptAi(prompt, {
+            sessionId: `new-${targetKind ?? "entity"}`,
+            signal: controller.signal,
+          });
+          const parsed = parseAiJson<unknown>(res.text);
+          const extracted = extractScriptsFromAiPayload(parsed);
+          if (extracted.customRuntimeJs) aiCustomJs = extracted.customRuntimeJs;
+          const normalized = normalizeScripts(extracted.scripts).filter((s) =>
+            allowedEvents.includes(s.event),
+          );
+          if (normalized.length > 0) {
+            valid = normalized;
+          }
+        } catch {
+          // Fallback local directo
         }
-      } catch {
-        // Fallback local directo
+      }
+
+      if (valid.length === 0 && aiCustomJs.trim()) {
+        valid = [
+          {
+            id: `html5-${Date.now().toString(36)}`,
+            event: allowedEvents[0] ?? "onUpdate",
+            blocks: [],
+            compiledJs: aiCustomJs.trim(),
+            customLanguageCode: code,
+          },
+        ];
       }
 
       if (valid.length === 0 && localCompiled.compiledScripts.length > 0) {
@@ -252,18 +285,28 @@ function ScriptCodeBox({
         ).filter((s) => allowedEvents.includes(s.event));
       }
 
-      const effectiveCompiledJs = aiCustomJs
-        ? `${localCompiled.compiledJs}\n\n${aiCustomJs}`
-        : localCompiled.compiledJs;
-
       valid = valid.map((sc) => {
-        const html5Js =
-          sc.compiledJs?.trim() ||
-          effectiveCompiledJs ||
+        const candidateAiJs = sc.compiledJs?.trim() || aiCustomJs.trim();
+        const compiledFromBlocks =
+          sc.blocks && sc.blocks.length > 0
+            ? compileScriptToHtml5Js(sc, undefined, targetKind)
+            : "";
+        const rawHtml5Js =
+          candidateAiJs ||
+          compiledFromBlocks ||
+          localCompiled.compiledJs ||
           compileScriptToHtml5Js(sc, undefined, targetKind);
+        const html5Js = isDirectJs
+          ? strippedHtmlScript
+          : sanitizeOrUpgradeHtml5ScriptJs(
+              rawHtml5Js,
+              code,
+              undefined,
+              targetKind,
+            );
         return {
           ...sc,
-          blocks: [],
+          blocks: sc.blocks ?? [],
           customLanguageCode: code,
           languageName: userLanguage.name,
           compiledJs: html5Js,
@@ -286,14 +329,14 @@ function ScriptCodeBox({
   };
 
   return (
-    <div className="rounded-xl p-3 space-y-2.5 border border-line-strong bg-card">
+    <div className="glass-surface rounded-xl p-3 space-y-2.5">
       <textarea
         value={req}
         onChange={(e) => setReq(e.target.value)}
         rows={4}
         disabled={busy}
         placeholder="Escribe tu código aquí..."
-        className="w-full p-2.5 rounded-lg bg-surface-2/40 border border-line-strong font-mono text-xs text-foreground placeholder:text-muted-foreground focus:outline-none disabled:opacity-60"
+        className="w-full p-2.5 rounded-lg font-mono text-xs text-foreground placeholder:text-muted-foreground focus:outline-none disabled:opacity-60"
       />
       {err && (
         <div className="text-[11px] text-destructive bg-destructive/10 border border-destructive/40 rounded-lg px-2.5 py-2">
@@ -327,7 +370,9 @@ function ScriptContinuationBox({
   onClose: () => void;
 }) {
   const userLanguage = useMemo(() => loadUserLanguage(), []);
-  const [instruction, setInstruction] = useState(script.customLanguageCode ?? "");
+  const [instruction, setInstruction] = useState(
+    script.compiledJs?.trim() || script.customLanguageCode || "",
+  );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [previous, setPrevious] = useState<Script | null>(null);
@@ -341,6 +386,25 @@ function ScriptContinuationBox({
     const controller = new AbortController();
     abortRef.current = controller;
     try {
+      const strippedHtmlScript = clean
+        .replace(/^<script[^>]*>/i, "")
+        .replace(/<\/script>$/i, "")
+        .trim();
+      const isDirectJs =
+        /(?:window\.AsternalRuntime|registerHook|document\.getElementById|requestAnimationFrame|\b(?:const|let|var|function)\s+[a-zA-Z_$]|\bapi\.(?:getPlayer|getEntities|spawnEntity|addScore|addLives|setGravity|setBg|shake|playSound)\b)/i.test(
+          strippedHtmlScript,
+        );
+
+      if (isDirectJs) {
+        setPrevious(script);
+        onApply({
+          ...script,
+          compiledJs: strippedHtmlScript,
+        });
+        onClose();
+        return;
+      }
+
       const localCompiled = compileUserLanguageLocally(clean, userLanguage, {
         targetEntityKind: targetKind,
         allowedEvents: [script.event],
@@ -380,14 +444,27 @@ function ScriptContinuationBox({
       }
 
       const nextScriptBase = applied?.script ?? script;
-      const html5Js = aiCustomJs
-        ? `${localCompiled.compiledJs}\n\n${aiCustomJs}`
-        : localCompiled.compiledJs || compileScriptToHtml5Js(nextScriptBase, undefined, targetKind);
+      const compiledFromBlocks =
+        nextScriptBase.blocks && nextScriptBase.blocks.length > 0
+          ? compileScriptToHtml5Js(nextScriptBase, undefined, targetKind)
+          : "";
+      const rawHtml5Js =
+        nextScriptBase.compiledJs?.trim() ||
+        aiCustomJs.trim() ||
+        compiledFromBlocks ||
+        localCompiled.compiledJs ||
+        compileScriptToHtml5Js(nextScriptBase, undefined, targetKind);
+      const html5Js = sanitizeOrUpgradeHtml5ScriptJs(
+        rawHtml5Js,
+        clean,
+        undefined,
+        targetKind,
+      );
 
       setPrevious(script);
       onApply({
         ...nextScriptBase,
-        blocks: [],
+        blocks: nextScriptBase.blocks ?? [],
         customLanguageCode: clean,
         languageName: userLanguage.name,
         compiledJs: html5Js,
@@ -404,14 +481,14 @@ function ScriptContinuationBox({
   };
 
   return (
-    <div className="rounded-xl p-2.5 space-y-2 bg-surface-2/40 border border-line-strong">
+    <div className="glass-surface rounded-xl p-2.5 space-y-2">
       <textarea
         value={instruction}
         onChange={(e) => setInstruction(e.target.value)}
         rows={2}
         disabled={busy}
         placeholder="Escribe el código..."
-        className="w-full p-2 rounded-lg bg-card border border-line-strong font-mono text-xs text-foreground placeholder:text-muted-foreground focus:outline-none disabled:opacity-60"
+        className="w-full p-2 rounded-lg font-mono text-xs text-foreground placeholder:text-muted-foreground focus:outline-none disabled:opacity-60"
       />
       {err && (
         <div className="text-[11px] text-destructive bg-destructive/10 border border-destructive/40 rounded-lg px-2.5 py-2">
@@ -435,7 +512,7 @@ function ScriptContinuationBox({
               onApply(previous);
               setPrevious(null);
             }}
-            className="inline-flex items-center gap-1 px-3 h-9 rounded-lg border border-line-strong bg-card text-[10px] font-display font-semibold tracking-widest text-foreground hover:bg-muted/60 transition"
+            className="glass-control inline-flex items-center gap-1 px-3 h-9 rounded-lg text-[10px] font-display font-semibold tracking-widest text-foreground transition"
           >
             <Undo2 size={11} />
             DESHACER

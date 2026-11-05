@@ -15,11 +15,17 @@ import {
   synthesizeScriptsFromRequest,
 } from "@/lib/ai/gemini-provider";
 import { ENGINE_KNOWLEDGE } from "@/lib/ai/engine-knowledge";
-import { summarizeProjectForOrionArchitect } from "@/lib/ai/orion-game-architect";
+import {
+  applyOrionPatchToProject,
+  buildOrionIntelligentPatch,
+  summarizeProjectForOrionArchitect,
+  type OrionEditPatch,
+} from "@/lib/ai/orion-game-architect";
 import {
   compileUserLanguageLocally,
+  isLegacyPlaceholderScriptJs,
   loadUserLanguage,
-  mergeCompiledProgramsIntoRuntimeJs,
+  sanitizeOrUpgradeHtml5ScriptJs,
   saveUserLanguageToStorage,
   type CustomLanguageProgram,
   type UserProgrammingLanguage,
@@ -44,9 +50,63 @@ const KIND_LABELS_ES: Record<EntityKind, string> = {
   decor: "Decoración",
 };
 
+function buildSceneIndependentRuntimeJs(
+  existingJs: string | undefined,
+  scenes: Scene[],
+): string {
+  const stripped = (existingJs || "")
+    .replace(/\/\/ \[BEGIN_USER_LANG_PROGRAM:[^\]]+\][\s\S]*?\/\/ \[END_USER_LANG_PROGRAM:[^\]]+\]\n?/g, "")
+    .trim();
+  const cleanBase = isLegacyPlaceholderScriptJs(stripped)
+    ? sanitizeOrUpgradeHtml5ScriptJs(stripped)
+    : stripped;
+
+  const scriptBlocks: string[] = [];
+  const seenIds = new Set<string>();
+  for (const sc of scenes) {
+    for (const ent of sc.entities ?? []) {
+      for (const s of ent.scripts ?? []) {
+        if (seenIds.has(s.id)) continue;
+        const js = sanitizeOrUpgradeHtml5ScriptJs(
+          s.compiledJs,
+          s.customLanguageCode,
+          ent.id,
+          ent.kind,
+        ).trim();
+        if (!js) continue;
+        seenIds.add(s.id);
+        const title = (s.customLanguageCode || s.event || "Script HTML5")
+          .split(/\r?\n/)[0]
+          .slice(0, 60);
+        scriptBlocks.push(
+          `// [BEGIN_USER_LANG_PROGRAM:${s.id}]\n` +
+            `// Script HTML5 Independiente (${ent.name || ent.kind}) · ${title}\n` +
+            `${js}\n` +
+            `// [END_USER_LANG_PROGRAM:${s.id}]`,
+        );
+      }
+    }
+  }
+
+  return [cleanBase, ...scriptBlocks].filter(Boolean).join("\n\n");
+}
+
+function stripScriptsFromPatch(patch: OrionEditPatch): OrionEditPatch {
+  return {
+    ...patch,
+    customRuntimeJs: "",
+    entityUpdates: patch.entityUpdates?.map((u) => {
+      const rest = { ...u };
+      delete rest.scriptsToAdd;
+      return rest;
+    }),
+  };
+}
+
 export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
   project,
   onChangeProject,
+  onSaveProject,
   onExit,
   onExitOrionMode,
   initialTargetEntityId = null,
@@ -94,6 +154,50 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
       setTargetEntityId("scene");
     }
   }, [activeScene, targetEntityId]);
+
+  // Si hay algún script antiguo con el placeholder de ondas en el proyecto actual, actualizarlo a su versión HTML5 real
+  useEffect(() => {
+    if (!activeScene) return;
+    let changed = false;
+    const upgradedEntities = activeScene.entities.map((ent) => {
+      if (!ent.scripts || ent.scripts.length === 0) return ent;
+      let entChanged = false;
+      const nextScripts = ent.scripts.map((sc) => {
+        if (sc.compiledJs && isLegacyPlaceholderScriptJs(sc.compiledJs, sc.customLanguageCode)) {
+          entChanged = true;
+          changed = true;
+          return {
+            ...sc,
+            compiledJs: sanitizeOrUpgradeHtml5ScriptJs(
+              sc.compiledJs,
+              sc.customLanguageCode,
+              ent.id,
+              ent.kind,
+            ),
+          };
+        }
+        return sc;
+      });
+      return entChanged ? { ...ent, scripts: nextScripts } : ent;
+    });
+
+    const rawRuntimeJs = project.customRuntime?.jsCode ?? "";
+    const runtimeHasLegacy = rawRuntimeJs ? isLegacyPlaceholderScriptJs(rawRuntimeJs) : false;
+
+    if (changed || runtimeHasLegacy) {
+      const nextScenes = project.scenes.map((s) =>
+        s.id === activeScene.id ? { ...activeScene, entities: upgradedEntities } : s,
+      );
+      onChangeProject({
+        ...project,
+        scenes: nextScenes,
+        customRuntime: {
+          ...(project.customRuntime ?? {}),
+          jsCode: buildSceneIndependentRuntimeJs(project.customRuntime?.jsCode, nextScenes),
+        },
+      });
+    }
+  }, [activeScene, onChangeProject, project]);
 
   const targetEntity: Entity | null = useMemo(() => {
     if (targetEntityId === "scene" || !activeScene) return null;
@@ -143,6 +247,22 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
         activeScene.entities[0] ??
         null;
 
+      const strippedHtmlScript = code
+        .replace(/^<script[^>]*>/i, "")
+        .replace(/<\/script>$/i, "")
+        .trim();
+      const isDirectJs =
+        /(?:window\.AsternalRuntime|registerHook|document\.getElementById|requestAnimationFrame|\b(?:const|let|var|function)\s+[a-zA-Z_$]|\bapi\.(?:getPlayer|getEntities|spawnEntity|addScore|addLives|setGravity|setBg|shake|playSound)\b)/i.test(
+          strippedHtmlScript,
+        );
+
+      // 1. Construir parche estructural determinista del proyecto (entidades, propiedades, escena, sonidos)
+      const structuralPatch = buildOrionIntelligentPatch(
+        code,
+        project,
+        targetEntity ? targetEntity.id : null,
+      );
+
       const localCompiled = compileUserLanguageLocally(code, userLanguage, {
         targetEntityId: recipientEntity?.id ?? null,
         targetEntityKind: recipientEntity?.kind,
@@ -150,37 +270,65 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
       });
 
       let generated: Script[] = [];
-      let aiCustomJs = "";
+      let aiCustomJs = isDirectJs ? strippedHtmlScript : "";
       let aiExplanation = "";
       let aiSynthSounds: Record<string, CustomSoundSynth> = {};
+      let remoteStructuralPatch: OrionEditPatch | null = null;
 
-      try {
-        const prompt = buildGeminiScriptPrompt({
-          userRequest: code,
-          engineKnowledge: ENGINE_KNOWLEDGE,
-          targetEntityKind: recipientEntity?.kind,
-          projectSummary: summarizeProjectForOrionArchitect(project),
-        });
-        const result = await requestScriptAi(prompt, {
-          sessionId: `script-${recipientEntity?.id ?? "scene"}`,
-          signal: controller.signal,
-        });
-        const parsed = parseAiJson<unknown>(result.text);
-        const extracted = extractScriptsFromAiPayload(parsed);
-        if (extracted.customRuntimeJs) aiCustomJs = extracted.customRuntimeJs;
-        if (extracted.explanation) aiExplanation = extracted.explanation;
-        if (extracted.synthSounds) {
-          aiSynthSounds = extracted.synthSounds as Record<string, CustomSoundSynth>;
-        }
+      if (!isDirectJs) {
+        try {
+          const prompt = buildGeminiScriptPrompt({
+            userRequest: code,
+            engineKnowledge: ENGINE_KNOWLEDGE,
+            targetEntityKind: recipientEntity?.kind,
+            projectSummary: summarizeProjectForOrionArchitect(project),
+          });
+          const result = await requestScriptAi(prompt, {
+            sessionId: `script-${recipientEntity?.id ?? "scene"}`,
+            signal: controller.signal,
+          });
+          const parsed = parseAiJson<unknown>(result.text);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            const obj = parsed as Record<string, unknown>;
+            if (
+              obj.scenePatch ||
+              obj.entitiesToAdd ||
+              obj.entityUpdates ||
+              obj.kindsToRemove ||
+              obj.replaceAllEntities ||
+              obj.redistributeLayout
+            ) {
+              remoteStructuralPatch = obj as unknown as OrionEditPatch;
+            }
+          }
+          const extracted = extractScriptsFromAiPayload(parsed);
+          if (extracted.customRuntimeJs) aiCustomJs = extracted.customRuntimeJs;
+          if (extracted.explanation) aiExplanation = extracted.explanation;
+          if (extracted.synthSounds) {
+            aiSynthSounds = extracted.synthSounds as Record<string, CustomSoundSynth>;
+          }
 
-        const aiScripts = normalizeScripts(extracted.scripts).filter((s) =>
-          ENTITY_EVENTS.includes(s.event),
-        );
-        if (aiScripts.length > 0) {
-          generated = aiScripts;
+          const aiScripts = normalizeScripts(extracted.scripts).filter((s) =>
+            ENTITY_EVENTS.includes(s.event),
+          );
+          if (aiScripts.length > 0) {
+            generated = aiScripts;
+          }
+        } catch {
+          // Si la petición remota falla, se usa el compilador HTML5 y parche de proyecto local
         }
-      } catch {
-        // Si la petición remota falla, se usa el compilador HTML5 local
+      }
+
+      if (generated.length === 0 && aiCustomJs.trim()) {
+        generated = [
+          {
+            id: `html5-${Date.now().toString(36)}`,
+            event: "onUpdate",
+            blocks: [],
+            compiledJs: aiCustomJs.trim(),
+            customLanguageCode: code,
+          },
+        ];
       }
 
       if (generated.length === 0 && localCompiled.compiledScripts.length > 0) {
@@ -193,15 +341,25 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
         ).filter((s) => ENTITY_EVENTS.includes(s.event));
       }
 
-      const effectiveCompiledJs = aiCustomJs
-        ? `${localCompiled.compiledJs}\n\n${aiCustomJs}`
-        : localCompiled.compiledJs;
-
       generated = generated.map((sc) => {
-        const html5Js =
-          effectiveCompiledJs ||
-          sc.compiledJs?.trim() ||
+        const candidateAiJs = sc.compiledJs?.trim() || aiCustomJs.trim();
+        const compiledFromBlocks =
+          sc.blocks && sc.blocks.length > 0
+            ? compileScriptToHtml5Js(sc, recipientEntity?.id ?? null, recipientEntity?.kind)
+            : "";
+        const rawHtml5Js =
+          candidateAiJs ||
+          compiledFromBlocks ||
+          localCompiled.compiledJs ||
           compileScriptToHtml5Js(sc, recipientEntity?.id ?? null, recipientEntity?.kind);
+        const html5Js = isDirectJs
+          ? strippedHtmlScript
+          : sanitizeOrUpgradeHtml5ScriptJs(
+              rawHtml5Js,
+              code,
+              recipientEntity?.id ?? null,
+              recipientEntity?.kind,
+            );
         return {
           ...sc,
           blocks: [],
@@ -212,10 +370,37 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
         };
       });
 
-      let nextEntities = activeScene.entities;
-      if (recipientEntity && generated.length > 0) {
-        nextEntities = activeScene.entities.map((ent) =>
-          ent.id === recipientEntity.id
+      const primaryCompiledJs =
+        generated[0]?.compiledJs ||
+        sanitizeOrUpgradeHtml5ScriptJs(
+          aiCustomJs || localCompiled.compiledJs,
+          code,
+          recipientEntity?.id ?? null,
+          recipientEntity?.kind,
+        );
+
+      // 2. Aplicar verdaderamente las ediciones al proyecto (escena, nuevas entidades, colores, tamaños, posiciones, física)
+      const mergedProjectPatch: OrionEditPatch = {
+        ...stripScriptsFromPatch(structuralPatch),
+        ...(remoteStructuralPatch ? stripScriptsFromPatch(remoteStructuralPatch) : {}),
+      };
+      const patchedProject = applyOrionPatchToProject(project, mergedProjectPatch);
+      const patchedScene =
+        patchedProject.scenes.find((s) => s.id === patchedProject.activeSceneId) ??
+        patchedProject.scenes[0];
+
+      const effectiveRecipient =
+        (recipientEntity
+          ? patchedScene.entities.find((e) => e.id === recipientEntity.id)
+          : null) ??
+        patchedScene.entities.find((e) => e.controllable || e.kind === "player") ??
+        patchedScene.entities[0] ??
+        null;
+
+      let nextEntities = patchedScene.entities;
+      if (effectiveRecipient && generated.length > 0) {
+        nextEntities = patchedScene.entities.map((ent) =>
+          ent.id === effectiveRecipient.id
             ? {
                 ...ent,
                 scripts: [...(ent.scripts ?? []), ...generated],
@@ -228,10 +413,10 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
         id: localCompiled.programId,
         title: localCompiled.title,
         sourceCode: code,
-        compiledJs: effectiveCompiledJs,
+        compiledJs: primaryCompiledJs,
         compiledScripts: generated,
         explanation: aiExplanation || localCompiled.explanation,
-        targetEntityId: recipientEntity?.id ?? null,
+        targetEntityId: effectiveRecipient?.id ?? null,
         updatedAt: Date.now(),
       };
 
@@ -255,24 +440,26 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
       saveUserLanguageToStorage(nextLang);
       setUserLanguage(nextLang);
 
-      const mergedJs = mergeCompiledProgramsIntoRuntimeJs(
-        project.customRuntime?.jsCode,
-        nextLang.programs,
-      );
-
       const nextScene: Scene = {
-        ...activeScene,
+        ...patchedScene,
         entities: nextEntities,
       };
+      const nextScenes = patchedProject.scenes.map((s) =>
+        s.id === patchedScene.id ? nextScene : s,
+      );
+      const mergedJs = buildSceneIndependentRuntimeJs(
+        patchedProject.customRuntime?.jsCode,
+        nextScenes,
+      );
 
       const nextProject: Project = {
-        ...project,
-        scenes: project.scenes.map((s) => (s.id === activeScene.id ? nextScene : s)),
+        ...patchedProject,
+        scenes: nextScenes,
         customRuntime: {
-          ...(project.customRuntime ?? {}),
+          ...(patchedProject.customRuntime ?? {}),
           jsCode: mergedJs,
           synthSounds: {
-            ...(project.customRuntime?.synthSounds ?? {}),
+            ...(patchedProject.customRuntime?.synthSounds ?? {}),
             ...localCompiled.synthSounds,
             ...aiSynthSounds,
           },
@@ -281,6 +468,7 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
       };
 
       onChangeProject(nextProject);
+      onSaveProject?.();
       setInput("");
     } catch (err) {
       setErrorMessage(
@@ -300,46 +488,90 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
     setErrorMessage(null);
 
     try {
+      const strippedHtmlScript = instruction
+        .replace(/^<script[^>]*>/i, "")
+        .replace(/<\/script>$/i, "")
+        .trim();
+      const isDirectJs =
+        /(?:window\.AsternalRuntime|registerHook|document\.getElementById|requestAnimationFrame|\b(?:const|let|var|function)\s+[a-zA-Z_$]|\bapi\.(?:getPlayer|getEntities|spawnEntity|addScore|addLives|setGravity|setBg|shake|playSound)\b)/i.test(
+          strippedHtmlScript,
+        );
+
+      const structuralPatch = buildOrionIntelligentPatch(instruction, project, entity.id);
       const localCompiled = compileUserLanguageLocally(instruction, userLanguage, {
+        programId: `ulp-${script.id}`,
         targetEntityId: entity.id,
         targetEntityKind: entity.kind,
         allowedEvents: [script.event],
       });
 
-      let updatedScript: Script | null = null;
-
-      try {
-        const prompt = buildGeminiScriptEditPrompt({
-          instruction,
-          engineKnowledge: ENGINE_KNOWLEDGE,
-          currentScript: script,
-          targetEntityKind: entity.kind,
-          projectSummary: summarizeProjectForOrionArchitect(project),
-        });
-        const res = await requestScriptAi(prompt, {
-          sessionId: `edit-script-${script.id}`,
-        });
-        const parsed = parseAiJson<unknown>(res.text);
-        const extracted = extractScriptsFromAiPayload(parsed);
-        const normalized = normalizeScripts(extracted.scripts);
-        if (normalized.length > 0) {
-          const candidateJs =
-            extracted.customRuntimeJs ||
-            normalized[0].compiledJs ||
-            localCompiled.compiledJs ||
-            compileScriptToHtml5Js(normalized[0], entity.id, entity.kind);
-          updatedScript = {
-            ...normalized[0],
+      let updatedScript: Script | null = isDirectJs
+        ? {
+            ...script,
             id: script.id,
-            event: normalized[0].event ?? script.event,
-            blocks: [],
-            customLanguageCode: instruction,
-            languageName: userLanguage.name,
-            compiledJs: candidateJs,
-          };
+            compiledJs: strippedHtmlScript,
+          }
+        : null;
+
+      if (!updatedScript) {
+        try {
+          const prompt = buildGeminiScriptEditPrompt({
+            instruction,
+            engineKnowledge: ENGINE_KNOWLEDGE,
+            currentScript: script,
+            targetEntityKind: entity.kind,
+            projectSummary: summarizeProjectForOrionArchitect(project),
+          });
+          const res = await requestScriptAi(prompt, {
+            sessionId: `edit-script-${script.id}`,
+          });
+          const parsed = parseAiJson<unknown>(res.text);
+          const extracted = extractScriptsFromAiPayload(parsed);
+          const normalized = normalizeScripts(extracted.scripts);
+          if (normalized.length > 0) {
+            const compiledFromBlocks =
+              normalized[0].blocks && normalized[0].blocks.length > 0
+                ? compileScriptToHtml5Js(normalized[0], entity.id, entity.kind)
+                : "";
+            const rawCandidateJs =
+              normalized[0].compiledJs?.trim() ||
+              extracted.customRuntimeJs?.trim() ||
+              compiledFromBlocks ||
+              localCompiled.compiledJs ||
+              compileScriptToHtml5Js(normalized[0], entity.id, entity.kind);
+            const candidateJs = sanitizeOrUpgradeHtml5ScriptJs(
+              rawCandidateJs,
+              instruction,
+              entity.id,
+              entity.kind,
+            );
+            updatedScript = {
+              ...normalized[0],
+              id: script.id,
+              event: normalized[0].event ?? script.event,
+              blocks: [],
+              customLanguageCode: instruction,
+              languageName: userLanguage.name,
+              compiledJs: candidateJs,
+            };
+          } else if (extracted.customRuntimeJs?.trim()) {
+            updatedScript = {
+              ...script,
+              id: script.id,
+              blocks: [],
+              customLanguageCode: instruction,
+              languageName: userLanguage.name,
+              compiledJs: sanitizeOrUpgradeHtml5ScriptJs(
+                extracted.customRuntimeJs.trim(),
+                instruction,
+                entity.id,
+                entity.kind,
+              ),
+            };
+          }
+        } catch {
+          // fallback local HTML5
         }
-      } catch {
-        // fallback local HTML5
       }
 
       if (!updatedScript && localCompiled.compiledScripts.length > 0) {
@@ -350,7 +582,12 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
           blocks: [],
           customLanguageCode: instruction,
           languageName: userLanguage.name,
-          compiledJs: localCompiled.compiledJs,
+          compiledJs: sanitizeOrUpgradeHtml5ScriptJs(
+            localCompiled.compiledJs,
+            instruction,
+            entity.id,
+            entity.kind,
+          ),
         };
       }
 
@@ -366,11 +603,24 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
           blocks: [],
           customLanguageCode: instruction,
           languageName: userLanguage.name,
-          compiledJs: localCompiled.compiledJs || compileScriptToHtml5Js(base, entity.id, entity.kind),
+          compiledJs: sanitizeOrUpgradeHtml5ScriptJs(
+            localCompiled.compiledJs || compileScriptToHtml5Js(base, entity.id, entity.kind),
+            instruction,
+            entity.id,
+            entity.kind,
+          ),
         };
       }
 
-      const nextEntities = activeScene.entities.map((e) => {
+      const patchedProject = applyOrionPatchToProject(
+        project,
+        stripScriptsFromPatch(structuralPatch),
+      );
+      const patchedScene =
+        patchedProject.scenes.find((s) => s.id === patchedProject.activeSceneId) ??
+        patchedProject.scenes[0];
+
+      const nextEntities = patchedScene.entities.map((e) => {
         if (e.id !== entity.id) return e;
         return {
           ...e,
@@ -378,11 +628,24 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
         };
       });
 
-      const nextScene: Scene = { ...activeScene, entities: nextEntities };
+      const nextScene: Scene = { ...patchedScene, entities: nextEntities };
+      const nextScenes = patchedProject.scenes.map((s) =>
+        s.id === patchedScene.id ? nextScene : s,
+      );
+      const mergedJs = buildSceneIndependentRuntimeJs(
+        patchedProject.customRuntime?.jsCode,
+        nextScenes,
+      );
+
       onChangeProject({
-        ...project,
-        scenes: project.scenes.map((s) => (s.id === activeScene.id ? nextScene : s)),
+        ...patchedProject,
+        scenes: nextScenes,
+        customRuntime: {
+          ...(patchedProject.customRuntime ?? {}),
+          jsCode: mergedJs,
+        },
       });
+      onSaveProject?.();
       setEditingScriptKey(null);
       setScriptEditPrompt("");
     } catch (err) {
@@ -404,6 +667,7 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
       };
     });
     const nextScene: Scene = { ...activeScene, entities: nextEntities };
+    const nextScenes = project.scenes.map((s) => (s.id === activeScene.id ? nextScene : s));
 
     let nextLang = userLanguage;
     if (removedScript?.customLanguageCode) {
@@ -416,14 +680,14 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
         setUserLanguage(nextLang);
       }
     }
-    const mergedJs = mergeCompiledProgramsIntoRuntimeJs(
+    const mergedJs = buildSceneIndependentRuntimeJs(
       project.customRuntime?.jsCode,
-      nextLang.programs,
+      nextScenes,
     );
 
     onChangeProject({
       ...project,
-      scenes: project.scenes.map((s) => (s.id === activeScene.id ? nextScene : s)),
+      scenes: nextScenes,
       customRuntime: {
         ...(project.customRuntime ?? {}),
         jsCode: mergedJs,
@@ -435,16 +699,16 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
   return (
     <div
       data-testid="orion-ai-mode-fullscreen"
-      className="fixed inset-0 z-[120] flex flex-col bg-background text-foreground select-none overflow-hidden"
+      className="editor-shell fixed inset-0 z-[120] flex flex-col text-foreground select-none overflow-hidden"
     >
       {/* Barra superior en una sola línea */}
-      <header className="editor-bar shrink-0 flex flex-nowrap items-center justify-between gap-2 px-3 sm:px-5 py-2.5 border-b border-line-strong bg-card">
+      <header className="editor-bar shrink-0 flex flex-nowrap items-center justify-between gap-2 px-3 sm:px-5 py-2.5 border-b">
         <div className="flex items-center gap-2 min-w-0">
           <button
             type="button"
             data-testid="orion-exit-btn"
             onClick={handleExitScreen}
-            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-foreground bg-card hover:bg-muted/60 border border-line-strong transition"
+            className="glass-control shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-foreground transition"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             <span>Volver</span>
@@ -461,7 +725,7 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-nowrap">
-          <div className="flex items-center gap-1 bg-card border border-line-strong rounded-lg px-2 py-1">
+          <div className="glass-control flex items-center gap-1 rounded-lg px-2 py-1">
             <Layers className="w-3.5 h-3.5 text-primary shrink-0" />
             <select
               data-testid="orion-scene-selector"
@@ -470,25 +734,25 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
               className="bg-transparent text-[11px] font-semibold text-foreground focus:outline-none pr-1 max-w-[95px] sm:max-w-[150px] truncate"
             >
               {project.scenes.map((sc) => (
-                <option key={sc.id} value={sc.id} className="bg-card text-foreground">
+                <option key={sc.id} value={sc.id} className="bg-popover text-foreground">
                   {sc.name}
                 </option>
               ))}
             </select>
           </div>
 
-          <div className="flex items-center gap-1 bg-card border border-line-strong rounded-lg px-2 py-1">
+          <div className="glass-control flex items-center gap-1 rounded-lg px-2 py-1">
             <select
               data-testid="orion-entity-target-selector"
               value={targetEntityId}
               onChange={(e) => setTargetEntityId(e.target.value)}
               className="bg-transparent text-[11px] font-semibold text-foreground focus:outline-none max-w-[110px] sm:max-w-[180px] truncate"
             >
-              <option value="scene" className="bg-card text-foreground">
+              <option value="scene" className="bg-popover text-foreground">
                 Todos los objetos ({activeScene?.name ?? "Escena"})
               </option>
               {(activeScene?.entities ?? []).map((ent) => (
-                <option key={ent.id} value={ent.id} className="bg-card text-foreground">
+                <option key={ent.id} value={ent.id} className="bg-popover text-foreground">
                   {ent.name || KIND_LABELS_ES[ent.kind]} ({(ent.scripts ?? []).length})
                 </option>
               ))}
@@ -502,7 +766,7 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
         {/* Cuadro de scripts HTML5 */}
         <div
           data-testid="orion-scripts-drawer"
-          className="panel flex-1 min-h-0 flex flex-col rounded-xl border border-line-strong bg-card overflow-hidden"
+          className="panel flex-1 min-h-0 flex flex-col rounded-xl overflow-hidden"
         >
           <div className="px-4 py-2.5 border-b border-line flex items-center justify-between">
             <span className="text-xs font-display font-bold uppercase tracking-wider text-primary">
@@ -525,7 +789,7 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
                 return (
                   <div
                     key={key}
-                    className="rounded-xl bg-surface-2/60 border border-line-strong p-3 space-y-2"
+                    className="glass-surface rounded-xl p-3 space-y-2"
                   >
                     <div className="flex items-center justify-between gap-2 flex-nowrap">
                       <div className="flex items-center gap-2 min-w-0">
@@ -535,7 +799,7 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
                         <span className="text-xs font-bold text-foreground truncate">
                           {entity.name || KIND_LABELS_ES[entity.kind]}
                         </span>
-                        <span className="shrink-0 text-[10px] font-display font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-card border border-line text-primary">
+                        <span className="shrink-0 text-[10px] font-display font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-primary/10 border border-primary/25 text-primary">
                           HTML5
                         </span>
                       </div>
@@ -545,16 +809,16 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
                           type="button"
                           onClick={() => {
                             setEditingScriptKey(isEditing ? null : key);
-                            setScriptEditPrompt(script.customLanguageCode ?? "");
+                            setScriptEditPrompt(html5Code || script.customLanguageCode || "");
                           }}
-                          className="px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-card text-foreground hover:bg-muted/60 border border-line-strong transition"
+                          className="glass-control px-2.5 py-1 rounded-lg text-[10px] font-semibold text-foreground transition"
                         >
                           {isEditing ? "Cerrar" : "Editar"}
                         </button>
                         <button
                           type="button"
                           onClick={() => handleDeleteScript(entity.id, script.id)}
-                          className="p-1.5 rounded-lg text-destructive hover:bg-destructive/10 border border-line-strong transition"
+                          className="glass-control p-1.5 rounded-lg text-destructive hover:bg-destructive/10 transition"
                           title="Eliminar script"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -562,11 +826,12 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
                       </div>
                     </div>
 
-                    {script.customLanguageCode && (
-                      <pre className="rounded-lg bg-card border border-line px-3 py-2 font-mono text-xs text-foreground whitespace-pre-wrap">
-                        {script.customLanguageCode}
-                      </pre>
-                    )}
+                    {script.customLanguageCode &&
+                      script.customLanguageCode.trim() !== html5Code.trim() && (
+                        <pre className="rounded-lg bg-card border border-line px-3 py-2 font-mono text-xs text-foreground whitespace-pre-wrap">
+                          {script.customLanguageCode}
+                        </pre>
+                      )}
 
                     <pre className="max-h-40 overflow-y-auto rounded-lg bg-background/80 border border-line px-3 py-2 font-mono text-[10px] text-muted-foreground whitespace-pre-wrap">
                       {html5Code}
@@ -577,9 +842,9 @@ export const OrionAiModeScreen: React.FC<OrionAiModeScreenProps> = ({
                         <textarea
                           value={scriptEditPrompt}
                           onChange={(e) => setScriptEditPrompt(e.target.value)}
-                          rows={3}
+                          rows={5}
                           disabled={editingBusy}
-                          placeholder="Escribe el código..."
+                          placeholder="Edita el script HTML5 o escribe el código..."
                           className="w-full px-3 py-2 rounded-lg bg-card border border-line-strong font-mono text-xs text-foreground placeholder:text-muted-foreground focus:outline-none"
                         />
                         <button

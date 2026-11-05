@@ -175,16 +175,22 @@ function sanitizeUserLanguage(raw: unknown): UserProgrammingLanguage {
   const programs: CustomLanguageProgram[] = Array.isArray(obj.programs)
     ? obj.programs
         .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
-        .map((item, idx) => ({
-          id: typeof item.id === "string" && item.id ? item.id : `prog-${idx}-${uid()}`,
-          title: typeof item.title === "string" && item.title.trim() ? item.title.trim() : `Programa #${idx + 1}`,
-          sourceCode: typeof item.sourceCode === "string" ? item.sourceCode : "",
-          compiledJs: typeof item.compiledJs === "string" ? item.compiledJs : "",
-          compiledScripts: Array.isArray(item.compiledScripts) ? (item.compiledScripts as Script[]) : undefined,
-          explanation: typeof item.explanation === "string" ? item.explanation : "",
-          targetEntityId: typeof item.targetEntityId === "string" ? item.targetEntityId : null,
-          updatedAt: typeof item.updatedAt === "number" ? item.updatedAt : Date.now(),
-        }))
+        .map((item, idx) => {
+          const sourceCode = typeof item.sourceCode === "string" ? item.sourceCode : "";
+          const rawCompiledJs = typeof item.compiledJs === "string" ? item.compiledJs : "";
+          const targetEntityId = typeof item.targetEntityId === "string" ? item.targetEntityId : null;
+          const upgradedJs = sanitizeOrUpgradeHtml5ScriptJs(rawCompiledJs, sourceCode, targetEntityId);
+          return {
+            id: typeof item.id === "string" && item.id ? item.id : `prog-${idx}-${uid()}`,
+            title: typeof item.title === "string" && item.title.trim() ? item.title.trim() : `Programa #${idx + 1}`,
+            sourceCode,
+            compiledJs: upgradedJs,
+            compiledScripts: Array.isArray(item.compiledScripts) ? (item.compiledScripts as Script[]) : undefined,
+            explanation: typeof item.explanation === "string" ? item.explanation : "",
+            targetEntityId,
+            updatedAt: typeof item.updatedAt === "number" ? item.updatedAt : Date.now(),
+          };
+        })
         .filter((item) => item.sourceCode.trim().length > 0 || item.compiledJs.trim().length > 0)
     : [];
 
@@ -249,19 +255,24 @@ export function mergeCompiledProgramsIntoRuntimeJs(
   existingJs: string | undefined,
   programs: CustomLanguageProgram[]
 ): string {
-  const base = (existingJs || "")
+  const stripped = (existingJs || "")
     .replace(/\/\/ \[BEGIN_USER_LANG_PROGRAM:[^\]]+\][\s\S]*?\/\/ \[END_USER_LANG_PROGRAM:[^\]]+\]\n?/g, "")
     .trim();
+  const base = isLegacyPlaceholderScriptJs(stripped)
+    ? sanitizeOrUpgradeHtml5ScriptJs(stripped)
+    : stripped;
 
   const blocks = programs
     .filter((p) => p.compiledJs && p.compiledJs.trim().length > 0)
-    .map(
-      (p) =>
+    .map((p) => {
+      const cleanJs = sanitizeOrUpgradeHtml5ScriptJs(p.compiledJs, p.sourceCode, p.targetEntityId);
+      return (
         `// [BEGIN_USER_LANG_PROGRAM:${p.id}]\n` +
         `// Lenguaje del usuario · ${p.title.replace(/\r?\n/g, " ")}\n` +
-        `${p.compiledJs.trim()}\n` +
+        `${cleanJs.trim()}\n` +
         `// [END_USER_LANG_PROGRAM:${p.id}]`
-    );
+      );
+    });
 
   if (blocks.length === 0) return base;
   return [base, ...blocks].filter(Boolean).join("\n\n");
@@ -522,13 +533,13 @@ function classifyHeaderEvent(header: string): {
     const seconds = numMatch ? Math.max(0.2, Math.min(30, Number(numMatch[1]))) : 2;
     return { eventType: "onTimer", intervalMs: Math.round(seconds * 1000) };
   }
-  if (/tecla|presiona|presionar|pulsar|onkeydown|espacio|space|salto|flecha/.test(lower)) {
+  if (/tecla|presiona|presionar|pulsar|onkeydown|espacio|space|flecha|boton\s+salto/.test(lower)) {
     let key: "left" | "right" | "jump" = "jump";
     if (/izquierda|left|tecla\s+a\b/.test(lower)) key = "left";
     else if (/derecha|right|tecla\s+d\b/.test(lower)) key = "right";
     return { eventType: "onKeyDown", key };
   }
-  if (/toca|choca|colision|colisiona|oncollide|enemigo|peligro|moneda|bloque/.test(lower)) {
+  if (/toca|choca|colision|colisiona|oncollide|enemigo|peligro|moneda|bloque/.test(lower) && /^(si|cuando|al|if|when|on)\b/i.test(lower)) {
     let withKind: EntityKind | "any" = "any";
     if (/enemigo|enemy|jefe|peligro/.test(lower)) withKind = "enemy";
     else if (/moneda|coin/.test(lower)) withKind = "coin";
@@ -548,6 +559,82 @@ function classifyHeaderEvent(header: string): {
   return { eventType: "onUpdate" };
 }
 
+/**
+ * Detecta si un fragmento JS fue generado por el antiguo fallback placeholder
+ * que dibujaba ondas azules con texto en cada fotograma en lugar de editar el juego.
+ */
+export function isLegacyPlaceholderScriptJs(js: string, sourceCode?: string): boolean {
+  if (!js || !js.includes("state.soundWaves.push")) return false;
+  const srcLower = (sourceCode || js).toLowerCase();
+  const explicitlyWantsSoundMap =
+    /sonido.*mapa|mostrar.*sonido|onda.*sonora|radar.*sonido|eco.*mapa|alarma.*mapa|onda\s+de\s+energ/i.test(
+      srcLower,
+    );
+  if (explicitlyWantsSoundMap) return false;
+  // Si empuja soundWaves con una etiqueta distinta de SONIDO EN EL MAPA / ONDA DE ENERGÍA, era un placeholder
+  if (!js.includes("SONIDO EN EL MAPA") && !js.includes("ONDA DE ENERGÍA")) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Si un script existente contiene el antiguo placeholder de ondas de sonido,
+ * lo recompila automáticamente a un script HTML5 real e independiente.
+ */
+export function sanitizeOrUpgradeHtml5ScriptJs(
+  rawJs: string | undefined | null,
+  fallbackSourceCode?: string | null,
+  targetEntityId?: string | null,
+  targetEntityKind?: EntityKind,
+): string {
+  const clean = (rawJs || "").trim();
+  if (!clean && !fallbackSourceCode?.trim()) return "";
+
+  // Si contiene múltiples bloques [BEGIN_USER_LANG_PROGRAM:...], sanitizar cada bloque por separado
+  const blockPattern =
+    /\/\/ \[BEGIN_USER_LANG_PROGRAM:([^\]]+)\]([\s\S]*?)\/\/ \[END_USER_LANG_PROGRAM:\1\]/g;
+  if (!fallbackSourceCode?.trim() && blockPattern.test(clean)) {
+    return clean
+      .replace(blockPattern, (_full, progId: string, inner: string) => {
+        const upgradedInner = sanitizeOrUpgradeHtml5ScriptJs(
+          inner,
+          undefined,
+          targetEntityId,
+          targetEntityKind,
+        ).trim();
+        if (!upgradedInner) return "";
+        return `// [BEGIN_USER_LANG_PROGRAM:${progId}]\n${upgradedInner}\n// [END_USER_LANG_PROGRAM:${progId}]`;
+      })
+      .trim();
+  }
+
+  if (clean && !isLegacyPlaceholderScriptJs(clean, fallbackSourceCode ?? undefined)) {
+    return clean;
+  }
+
+  const headerCommentMatch =
+    clean.match(/\/\/\s*Script HTML5(?: Independiente\s*\([^)]*\))?\s*·\s*([^\r\n]+)/i) ||
+    clean.match(/\/\/\s*Lenguaje del usuario\s*·\s*([^\r\n]+)/i) ||
+    clean.match(/\/\/\s*Programa\s*(?:\([^)]*\))?\s*[:·]\s*([^\r\n]+)/i);
+  const labelMatches = Array.from(clean.matchAll(/label:\s*["']([^"']+)["']/g))
+    .map((m) => m[1]?.trim())
+    .filter((lbl): lbl is string => Boolean(lbl && lbl !== "SONIDO EN EL MAPA" && lbl !== "ONDA DE ENERGÍA"));
+
+  const extractedSource =
+    fallbackSourceCode?.trim() ||
+    (labelMatches.length > 0 ? labelMatches.join("\n") : "") ||
+    headerCommentMatch?.[1]?.replace(/\s*\|\s*/g, "\n").trim() ||
+    "";
+
+  if (!extractedSource) return "";
+  const recompiled = compileUserLanguageLocally(extractedSource, DEFAULT_USER_LANGUAGE, {
+    targetEntityId,
+    targetEntityKind,
+  });
+  return recompiled.compiledJs;
+}
+
 export function compileUserLanguageLocally(
   userCode: string,
   lang: UserProgrammingLanguage,
@@ -561,8 +648,51 @@ export function compileUserLanguageLocally(
 ): CompiledCustomLanguageResult {
   const programId = opts?.programId || `ulp-${uid()}`;
   const cleanCode = userCode.trim();
-  const firstLine = cleanCode.split(/\r?\n/)[0]?.replace(/:$/, "").trim() || "Programa personalizado";
+  const firstLine = cleanCode.split(/\r?\n/)[0]?.replace(/:$/, "").trim() || "Script HTML5";
   const title = opts?.title?.trim() || firstLine.slice(0, 48);
+
+  // Si el usuario escribió directamente código JavaScript / HTML5 (window.AsternalRuntime, api., ctx., function, etc.)
+  const looksLikeRawJs =
+    /window\.AsternalRuntime|window\.AsternalAudio|\bapi\.(getPlayer|getEntities|spawnEntity|addScore|addLives|setGravity|setBg|physics)\b|\bctx\.(fillRect|arc|drawImage|beginPath)\b|^\s*(function|const|let|var)\s+[a-zA-Z_$]/m.test(
+      cleanCode,
+    );
+  if (looksLikeRawJs) {
+    const wrappedRawJs = cleanCode.includes("window.AsternalRuntime.registerHook")
+      ? cleanCode
+      : [
+          `// Script HTML5 Independiente · ${title.replace(/\r?\n/g, " ")}`,
+          `(function() {`,
+          `  if (typeof window === "undefined" || !window.AsternalRuntime) return;`,
+          `  window.AsternalRuntime.registerHook({`,
+          `    id: ${JSON.stringify(programId)},`,
+          `    onTick: function(api, dt) {`,
+          `      ${cleanCode}`,
+          `    }`,
+          `  });`,
+          `})();`,
+        ].join("\n");
+    const rawScriptObj: Script = {
+      id: uid(),
+      event: "onUpdate",
+      blocks: [],
+      customLanguageCode: cleanCode,
+      languageName: "HTML5 JS",
+      compiledJs: wrappedRawJs,
+      aiExplanation: "Script HTML5 independiente ejecutado directamente en el motor.",
+    };
+    return {
+      programId,
+      title,
+      sourceCode: cleanCode,
+      expandedSourceCode: cleanCode,
+      compiledJs: wrappedRawJs,
+      compiledScripts: [rawScriptObj],
+      synthSounds: {},
+      explanation: "Script HTML5 independiente aplicado directamente.",
+      detectedKeywords: [],
+      hasSpecificMatch: true,
+    };
+  }
 
   const detectedKeywords = extractCustomKeywordsFromCode(cleanCode, lang.dictionary);
   const fullDictionary = [...lang.dictionary, ...detectedKeywords];
@@ -571,11 +701,15 @@ export function compileUserLanguageLocally(
 
   const compiledScripts: Script[] = [];
   const synthSounds: Record<string, CustomSoundSynth> = {};
+  const jsInitSections: string[] = [];
   const jsHookSections: string[] = [];
   const jsCollideSections: string[] = [];
   const jsKeyDownSections: string[] = [];
+  const jsRenderSections: string[] = [];
   const explanations: string[] = [];
   let hasSpecificMatch = false;
+  let usesSoundWaves = false;
+  let usesShots = false;
 
   parsedBlocks.forEach((block, blockIndex) => {
     let eventType: EventType = block.eventType;
@@ -609,9 +743,10 @@ export function compileUserLanguageLocally(
       const numMatch = rawAction.match(/(-?\d+(?:\.\d+)?)/);
       const numVal = numMatch ? Number(numMatch[1]) : null;
 
-      // 1. MOSTRAR sonido en el mapa / Radar sonoro visual + acústico
+      // 1. MOSTRAR sonido en el mapa / Radar sonoro visual + acústico (explícito)
       if (/sonido.*mapa|mostrar.*sonido|onda.*sonora|radar.*sonido|eco.*mapa|alarma.*mapa/.test(lower)) {
         hasSpecificMatch = true;
+        usesSoundWaves = true;
         const soundName = `user_lang_map_sound_${blockIndex + 1}`;
         synthSounds[soundName] = {
           name: soundName,
@@ -640,21 +775,24 @@ export function compileUserLanguageLocally(
         });
 
         jsActionStatements.push(`
-          if (api && typeof api.playSound === "function") {
-            api.playSound("synth:${soundName}");
-          } else if (window.AsternalAudio && typeof window.AsternalAudio.play === "function") {
-            window.AsternalAudio.play("${soundName}");
+          if (!state.soundWaveCd_${blockIndex} || state.soundWaveCd_${blockIndex} <= 0) {
+            state.soundWaveCd_${blockIndex} = 0.85;
+            if (api && typeof api.playSound === "function") {
+              api.playSound("synth:${soundName}");
+            } else if (window.AsternalAudio && typeof window.AsternalAudio.play === "function") {
+              window.AsternalAudio.play("${soundName}");
+            }
+            var srcEnt = (api && typeof api.getPlayer === "function" && api.getPlayer()) || { x: 320, y: 200, w: 36, h: 48 };
+            state.soundWaves.push({
+              x: (srcEnt.x || 0) + ((srcEnt.w || 36) / 2),
+              y: (srcEnt.y || 0) + ((srcEnt.h || 48) / 2),
+              radius: 12,
+              maxRadius: 280,
+              alpha: 1,
+              label: "🔊 SONIDO EN EL MAPA",
+              color: "${eventType === "onLose" ? "#fb7185" : "#38bdf8"}"
+            });
           }
-          var srcEnt = (api && typeof api.getPlayer === "function" && api.getPlayer()) || { x: 320, y: 200, w: 36, h: 48 };
-          state.soundWaves.push({
-            x: (srcEnt.x || 0) + ((srcEnt.w || 36) / 2),
-            y: (srcEnt.y || 0) + ((srcEnt.h || 48) / 2),
-            radius: 12,
-            maxRadius: 280,
-            alpha: 1,
-            label: "🔊 SONIDO EN EL MAPA",
-            color: "${eventType === "onLose" ? "#fb7185" : "#38bdf8"}"
-          });
         `);
         explanations.push(
           `Tradujo "${rawAction.split(" (")[0].trim()}" a un emisor de sonido WebAudio + radar visual de ondas acústicas en el mapa HTML5.`
@@ -680,16 +818,19 @@ export function compileUserLanguageLocally(
           text: soundKey,
         });
         jsActionStatements.push(`
-          if (api && typeof api.playSound === "function") {
-            api.playSound("${soundKey}");
+          if (!state.sfxCd_${blockIndex} || state.sfxCd_${blockIndex} <= 0) {
+            state.sfxCd_${blockIndex} = 0.4;
+            if (api && typeof api.playSound === "function") {
+              api.playSound("${soundKey}");
+            }
           }
         `);
-        explanations.push(`Reproduce el sonido "${soundKey}" cuando se cumple la condición.`);
+        explanations.push(`Reproduce el sonido "${soundKey}" en el motor HTML5.`);
         continue;
       }
 
       // 3. Sacudir cámara / pantalla
-      if (/sacudir|temblar|vibrar|terremoto|shake/.test(lower)) {
+      if (/sacudir|sacude|temblar|tiembla|vibrar|terremoto|shake/.test(lower)) {
         hasSpecificMatch = true;
         const intensity = numVal ? Math.max(2, Math.min(25, Math.abs(numVal))) : 9;
         scriptBlocks.push({
@@ -706,10 +847,64 @@ export function compileUserLanguageLocally(
         continue;
       }
 
-      // 4. Saltar / Impulso vertical
-      if (/saltar|brincar|impulso|elevar|volar/.test(lower)) {
+      // 4. Doble salto / Triple salto / Multi-salto
+      if (/doble\s+salto|triple\s+salto|double\s+jump|multi\s*salto|saltar\s+en\s+el\s+aire/.test(lower)) {
         hasSpecificMatch = true;
-        const force = numVal ? Math.abs(numVal) : 480;
+        const maxAirJumps = /triple/.test(lower) ? 2 : 1;
+        const jumpForce = numVal && numVal > 50 ? Math.abs(numVal) : 540;
+        scriptBlocks.push({ id: uid(), kind: "jump", value: jumpForce });
+        jsHookSections.push(`
+          var pAir = getTargetEntity(api, "player");
+          if (pAir && Math.abs(pAir.vy || 0) < 2) {
+            state.airJumpsLeft = ${maxAirJumps};
+          }
+        `);
+        jsKeyDownSections.push(`
+          if (code === "ArrowUp" || code === "KeyW" || code === "Space" || key === " ") {
+            var pAirKey = getTargetEntity(api, "player");
+            if (pAirKey && Math.abs(pAirKey.vy || 0) >= 2 && (state.airJumpsLeft || 0) > 0) {
+              state.airJumpsLeft -= 1;
+              pAirKey.vy = -${jumpForce};
+              if (api && typeof api.playSound === "function") api.playSound("jump");
+              if (api && typeof api.emitBurst === "function") {
+                api.emitBurst(pAirKey.x + pAirKey.w / 2, pAirKey.y + pAirKey.h, "#38bdf8", 12);
+              }
+            }
+          }
+        `);
+        explanations.push(`Activa ${maxAirJumps === 2 ? "triple" : "doble"} salto en HTML5 con fuerza ${jumpForce}.`);
+        continue;
+      }
+
+      // 5. Volar / Flotar / Levitar / Jetpack
+      if (/\b(vuela|volar|vuele|flota|flotar|levita|levitar|jetpack|fly)\b/.test(lower)) {
+        hasSpecificMatch = true;
+        const flySpeed = numVal ? Math.max(120, Math.min(700, Math.abs(numVal))) : 320;
+        scriptBlocks.push({ id: uid(), kind: "jump", value: flySpeed });
+        jsActionStatements.push(`
+          var pFly = getTargetEntity(api, "player");
+          if (pFly) {
+            var inp = api && typeof api.getInput === "function" ? api.getInput() : null;
+            if (!inp || inp.jump) {
+              pFly.vy = -${flySpeed};
+              if (api && typeof api.emitBurst === "function" && Math.random() < 0.35) {
+                api.emitBurst(pFly.x + pFly.w / 2, pFly.y + pFly.h, "#38bdf8", 3);
+              }
+            } else if (pFly.vy > 120) {
+              pFly.vy = 120;
+            }
+          }
+        `);
+        explanations.push(`Activa vuelo/jetpack en HTML5 con impulso vertical ${flySpeed}.`);
+        continue;
+      }
+
+      // 6. Saltar / Salta / Brincar / Impulso vertical
+      if (/\b(salta|saltar|salte|salto|saltando|brinca|brincar|brinque|impulso|impulsar|elevar|eleva|rebota|rebotar|jump|hop|bounce)\b/.test(lower)) {
+        hasSpecificMatch = true;
+        const isHigh = /alto|super|súper|mucho|fuerte|gran/.test(lower);
+        const force = numVal ? Math.max(180, Math.min(1200, Math.abs(numVal))) : isHigh ? 680 : 540;
+        const targetKindHint: EntityKind = /enemigo|enemy/.test(lower) ? "enemy" : "player";
         scriptBlocks.push({
           id: uid(),
           kind: "jump",
@@ -720,21 +915,53 @@ export function compileUserLanguageLocally(
           kind: "playSound",
           text: "jump",
         });
-        jsActionStatements.push(`
-          var pJump = api && typeof api.getPlayer === "function" ? api.getPlayer() : null;
-          if (pJump) { pJump.vy = -${force}; }
+        jsInitSections.push(`
+          if (api && api.physics && "${targetKindHint}" === "player") {
+            api.physics.jumpForce = Math.max(api.physics.jumpForce || 520, ${force});
+          }
         `);
-        explanations.push(`Impulsa la entidad hacia arriba con fuerza ${force}.`);
+        if (eventType === "onUpdate") {
+          jsActionStatements.push(`
+            var pJump = getTargetEntity(api, "${targetKindHint}");
+            if (pJump) {
+              if (api && api.physics && pJump.kind === "player") {
+                api.physics.jumpForce = Math.max(api.physics.jumpForce || 520, ${force});
+              }
+              state.jumpCd_${blockIndex} = Math.max(0, (state.jumpCd_${blockIndex} || 0) - (dt || 0.016));
+              var isGroundedNow = Math.abs(pJump.vy || 0) < 2;
+              if (isGroundedNow && state.jumpCd_${blockIndex} <= 0) {
+                pJump.vy = -${force};
+                state.jumpCd_${blockIndex} = 0.22;
+                if (api && typeof api.playSound === "function") api.playSound("jump");
+                if (api && typeof api.emitBurst === "function") {
+                  api.emitBurst(pJump.x + pJump.w / 2, pJump.y + pJump.h, "#38bdf8", 8);
+                }
+              }
+            }
+          `);
+        } else {
+          jsActionStatements.push(`
+            var pJump = getTargetEntity(api, "${targetKindHint}");
+            if (pJump) {
+              pJump.vy = -${force};
+              if (api && typeof api.playSound === "function") api.playSound("jump");
+              if (api && typeof api.emitBurst === "function") {
+                api.emitBurst(pJump.x + pJump.w / 2, pJump.y + pJump.h, "#38bdf8", 10);
+              }
+            }
+          `);
+        }
+        explanations.push(`Edita el script HTML5 para hacer saltar a la entidad con fuerza ${force}.`);
         continue;
       }
 
-      // 5. Empujar / Mover / Velocidad / Dash
-      if (/empujar|mover|avanzar|desplazar|velocidad|dash|esquivar|turbo|correr/.test(lower)) {
+      // 7. Empujar / Mover / Velocidad / Dash / Correr / Caminar
+      if (/\b(empujar|empuja|mover|mueve|mueva|avanzar|avanza|desplazar|velocidad|dash|esquivar|turbo|correr|corre|caminar|camina|rapido|rápido|lento|speed|run|move)\b/.test(lower)) {
         hasSpecificMatch = true;
-        const isDash = /dash|esquivar|turbo/.test(lower);
-        const vx = /atras|izquierda|left/.test(lower)
-          ? -(numVal ? Math.abs(numVal) : isDash ? 580 : 240)
-          : numVal || (isDash ? 580 : 240);
+        const isDash = /\b(dash|esquivar|turbo)\b/.test(lower);
+        const isSlow = /\b(lento|despacio|slow)\b/.test(lower);
+        const baseAbs = numVal ? Math.abs(numVal) : isDash ? 580 : isSlow ? 120 : 340;
+        const vx = /atras|atrás|izquierda|left/.test(lower) ? -baseAbs : baseAbs;
         scriptBlocks.push({
           id: uid(),
           kind: "setVx",
@@ -743,9 +970,32 @@ export function compileUserLanguageLocally(
         if (isDash) {
           scriptBlocks.push({ id: uid(), kind: "playSound", text: "powerup" });
         }
+        jsInitSections.push(`
+          if (api && api.physics && !${isDash}) {
+            api.physics.baseSpeed = ${Math.abs(vx)};
+          }
+        `);
+        if (isDash && eventType === "onUpdate") {
+          jsKeyDownSections.push(`
+            if (code === "ShiftLeft" || code === "ShiftRight" || code === "KeyX" || key === "x" || key === "X") {
+              var pDash = getTargetEntity(api, "player");
+              if (pDash) {
+                var dirDash = pDash.facing === -1 ? -1 : 1;
+                pDash.vx = dirDash * ${Math.abs(vx)};
+                if (api && typeof api.playSound === "function") api.playSound("powerup");
+                if (api && typeof api.emitBurst === "function") {
+                  api.emitBurst(pDash.x + pDash.w / 2, pDash.y + pDash.h / 2, "#38bdf8", 14);
+                }
+              }
+            }
+          `);
+        }
         jsActionStatements.push(`
-          var pMove = api && typeof api.getPlayer === "function" ? api.getPlayer() : null;
+          var pMove = getTargetEntity(api, "player");
           if (pMove) {
+            if (api && api.physics && !${isDash}) {
+              api.physics.baseSpeed = ${Math.abs(vx)};
+            }
             var dirMove = pMove.facing === -1 ? -1 : 1;
             pMove.vx = ${isDash ? `dirMove * ${Math.abs(vx)}` : vx};
             if (${isDash} && api && typeof api.emitBurst === "function") {
@@ -753,14 +1003,14 @@ export function compileUserLanguageLocally(
             }
           }
         `);
-        explanations.push(`Aplica velocidad horizontal (${vx} px/s).`);
+        explanations.push(`Aplica movimiento/velocidad horizontal (${vx} px/s) en el runtime HTML5.`);
         continue;
       }
 
-      // 6. Perseguir al jugador
-      if (/perseguir|seguir|cazar|buscar\s+jugador/.test(lower)) {
+      // 8. Perseguir al jugador / Patrullar
+      if (/\b(perseguir|persigue|seguir|sigue|cazar|caza|buscar|busca|chase|follow)\b/.test(lower)) {
         hasSpecificMatch = true;
-        const speed = numVal ? Math.max(40, Math.min(500, Math.abs(numVal))) : 140;
+        const speed = numVal ? Math.max(40, Math.min(500, Math.abs(numVal))) : 150;
         scriptBlocks.push({
           id: uid(),
           kind: "chase",
@@ -768,20 +1018,25 @@ export function compileUserLanguageLocally(
           value: speed,
         });
         jsActionStatements.push(`
-          var chaser = getTargetEntity(api, "enemy");
           var pTarget = api && typeof api.getPlayer === "function" ? api.getPlayer() : null;
-          if (chaser && pTarget && chaser.id !== pTarget.id) {
-            var dx = (pTarget.x + pTarget.w / 2) - (chaser.x + chaser.w / 2);
-            chaser.vx = dx === 0 ? 0 : (dx > 0 ? ${speed} : -${speed});
-            chaser.facing = dx >= 0 ? 1 : -1;
+          var enemiesChase = api && typeof api.getEntities === "function" ? api.getEntities("enemy") : [];
+          var chaser = getTargetEntity(api, "enemy");
+          var listChase = (chaser && chaser.kind === "enemy") ? [chaser] : enemiesChase;
+          for (var ci = 0; ci < listChase.length; ci++) {
+            var ce = listChase[ci];
+            if (ce && pTarget && ce.id !== pTarget.id) {
+              var dx = (pTarget.x + pTarget.w / 2) - (ce.x + ce.w / 2);
+              ce.vx = Math.abs(dx) < 6 ? 0 : (dx > 0 ? ${speed} : -${speed});
+              ce.facing = dx >= 0 ? 1 : -1;
+            }
           }
         `);
-        explanations.push(`Activa persecución hacia el jugador a velocidad ${speed}.`);
+        explanations.push(`Activa persecución hacia el jugador a velocidad ${speed} en HTML5.`);
         continue;
       }
 
-      // 7. Puntos / Score
-      if (/punto|puntos|score|moneda|recompensa/.test(lower)) {
+      // 9. Puntos / Score
+      if (/\b(punto|puntos|score|puntaje|recompensa|sumar|restar\s+puntos)\b/.test(lower)) {
         hasSpecificMatch = true;
         const delta = /restar|quitar|perder/.test(lower)
           ? -(numVal ? Math.abs(numVal) : 10)
@@ -791,17 +1046,50 @@ export function compileUserLanguageLocally(
           kind: "addScore",
           value: delta,
         });
-        jsActionStatements.push(`
-          if (api && typeof api.addScore === "function") { api.addScore(${delta}); }
-        `);
+        if (eventType === "onUpdate") {
+          jsActionStatements.push(`
+            if (!state.scoreApplied_${blockIndex}) {
+              state.scoreApplied_${blockIndex} = true;
+              if (api && typeof api.addScore === "function") { api.addScore(${delta}); }
+            }
+          `);
+        } else {
+          jsActionStatements.push(`
+            if (api && typeof api.addScore === "function") { api.addScore(${delta}); }
+          `);
+        }
         explanations.push(`Modifica el puntaje en ${delta > 0 ? `+${delta}` : delta} puntos.`);
         continue;
       }
 
-      // 8. Vidas / Salud / Daño
-      if (/vida|vidas|salud|curar|daño|restar\s+vida|hurt/.test(lower)) {
+      // 10. Vidas / Salud / Daño / Escudo / Invencible
+      if (/\b(escudo|invencible|inmortal|god\s*mode|proteger)\b/.test(lower)) {
         hasSpecificMatch = true;
-        const delta = /restar|quitar|daño|perder|hurt/.test(lower)
+        jsActionStatements.push(`
+          if (api && api.state) {
+            api.state.invulnT = Math.max(api.state.invulnT || 0, 2.0);
+          }
+        `);
+        jsRenderSections.push(`
+          var pShield = getTargetEntity(api, "player");
+          if (pShield && ctx) {
+            ctx.save();
+            ctx.strokeStyle = "#38bdf8";
+            ctx.lineWidth = 3;
+            ctx.globalAlpha = 0.65;
+            ctx.beginPath();
+            ctx.arc(pShield.x + pShield.w / 2, pShield.y + pShield.h / 2, Math.max(pShield.w, pShield.h) * 0.72, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+          }
+        `);
+        explanations.push(`Activa un escudo protector HTML5 alrededor del jugador.`);
+        continue;
+      }
+
+      if (/\b(vida|vidas|salud|curar|cura|daño|dano|herir|hiere|restar\s+vida|hurt|heal)\b/.test(lower)) {
+        hasSpecificMatch = true;
+        const delta = /restar|quitar|daño|dano|herir|hiere|perder|hurt/.test(lower)
           ? -(numVal ? Math.abs(numVal) : 1)
           : numVal || 1;
         scriptBlocks.push({
@@ -809,16 +1097,26 @@ export function compileUserLanguageLocally(
           kind: "addLives",
           value: delta,
         });
-        jsActionStatements.push(`
-          if (api && typeof api.addLives === "function") { api.addLives(${delta}); }
-        `);
+        if (eventType === "onUpdate") {
+          jsActionStatements.push(`
+            if (!state.livesApplied_${blockIndex}) {
+              state.livesApplied_${blockIndex} = true;
+              if (api && typeof api.addLives === "function") { api.addLives(${delta}); }
+            }
+          `);
+        } else {
+          jsActionStatements.push(`
+            if (api && typeof api.addLives === "function") { api.addLives(${delta}); }
+          `);
+        }
         explanations.push(`Cambia las vidas del jugador en ${delta > 0 ? `+${delta}` : delta}.`);
         continue;
       }
 
-      // 9. Disparar / Proyectil / Láser / Ataque
-      if (/dispar|proyectil|bala|laser|láser|fuego|lanzar/.test(lower)) {
+      // 11. Disparar / Proyectil / Láser / Ataque
+      if (/\b(dispara|disparar|disparo|proyectil|bala|laser|láser|fuego|lanzar|lanza|ataca|atacar|ataque|shoot|fire)\b/.test(lower)) {
         hasSpecificMatch = true;
+        usesShots = true;
         synthSounds.laser = {
           name: "laser",
           wave: "sawtooth",
@@ -832,36 +1130,129 @@ export function compileUserLanguageLocally(
           kind: "playSound",
           text: "powerup",
         });
-        scriptBlocks.push({
-          id: uid(),
-          kind: "shake",
-          value: 4,
-        });
-        jsActionStatements.push(`
+        const fireStmt = `
           var pShot = getTargetEntity(api, "player");
           if (pShot) {
+            state.shots = state.shots || [];
+            var dirShot = pShot.facing === -1 ? -1 : 1;
+            state.shots.push({
+              x: pShot.x + (dirShot > 0 ? pShot.w + 4 : -14),
+              y: pShot.y + pShot.h * 0.42,
+              vx: dirShot * 680,
+              life: 1.4
+            });
             if (api && typeof api.playSound === "function") api.playSound("synth:laser");
             if (api && typeof api.emitBurst === "function") {
-              api.emitBurst(pShot.x + pShot.w / 2, pShot.y + pShot.h / 2, "#38bdf8", 14);
+              api.emitBurst(pShot.x + pShot.w / 2, pShot.y + pShot.h / 2, "#38bdf8", 10);
             }
-            var enemiesNow = api && typeof api.getEntities === "function" ? api.getEntities("enemy") : [];
-            for (var ei = 0; ei < enemiesNow.length; ei++) {
-              var en = enemiesNow[ei];
-              if (Math.abs((en.x || 0) - (pShot.x || 0)) < 320 && Math.abs((en.y || 0) - (pShot.y || 0)) < 140) {
-                en.x = -99999;
-                if (api && typeof api.addScore === "function") api.addScore(25);
-                break;
+          }
+        `;
+        if (eventType === "onUpdate") {
+          jsKeyDownSections.push(`
+            if (code === "KeyZ" || code === "KeyF" || code === "KeyX" || code === "Space" || key === "z" || key === "f") {
+              ${fireStmt}
+            }
+          `);
+          jsActionStatements.push(`
+            state.autoShotCd_${blockIndex} = (state.autoShotCd_${blockIndex} || 0) - (dt || 0.016);
+            if (state.autoShotCd_${blockIndex} <= 0) {
+              state.autoShotCd_${blockIndex} = 0.85;
+              ${fireStmt}
+            }
+          `);
+        } else {
+          jsActionStatements.push(fireStmt);
+        }
+        jsHookSections.push(`
+          if (state.shots && state.shots.length) {
+            var enemiesList = api && typeof api.getEntities === "function" ? api.getEntities("enemy") : [];
+            for (var si = state.shots.length - 1; si >= 0; si--) {
+              var sh = state.shots[si];
+              sh.x += sh.vx * (dt || 0.016);
+              sh.life -= (dt || 0.016);
+              for (var ei = 0; ei < enemiesList.length; ei++) {
+                var en = enemiesList[ei];
+                if (sh.x + 12 >= en.x && sh.x <= en.x + en.w && sh.y + 6 >= en.y && sh.y <= en.y + en.h) {
+                  if (api && typeof api.removeEntity === "function") api.removeEntity(en.id);
+                  if (api && typeof api.addScore === "function") api.addScore(25);
+                  if (api && typeof api.emitBurst === "function") api.emitBurst(en.x + en.w / 2, en.y + en.h / 2, "#f43f5e", 16);
+                  sh.life = 0;
+                  break;
+                }
+              }
+              if (sh.life <= 0) state.shots.splice(si, 1);
+            }
+          }
+        `);
+        jsRenderSections.push(`
+          if (ctx && state.shots && state.shots.length) {
+            ctx.save();
+            ctx.fillStyle = "#38bdf8";
+            for (var rsi = 0; rsi < state.shots.length; rsi++) {
+              var rsh = state.shots[rsi];
+              ctx.fillRect(rsh.x, rsh.y, 14, 5);
+            }
+            ctx.restore();
+          }
+        `);
+        explanations.push(`Programa proyectiles láser HTML5 que destruyen enemigos al impactar.`);
+        continue;
+      }
+
+      // 12. Crear / Spawnear / Lluvia / Invocar entidades
+      if (/\b(crear|crea|generar|genera|spawnear|spawnea|aparecer|aparece|invocar|invoca|lluvia|meteorito|spawn)\b/.test(lower) && !/onda\s+de\s+energ/.test(lower)) {
+        hasSpecificMatch = true;
+        const spawnKind: EntityKind = /enemigo|enemy|meteorito|peligro/.test(lower)
+          ? "enemy"
+          : /plataforma|bloque|suelo/.test(lower)
+          ? "platform"
+          : "coin";
+        const count = numVal ? Math.max(1, Math.min(12, Math.abs(Math.round(numVal)))) : 3;
+        jsInitSections.push(`
+          if (api && typeof api.spawnEntity === "function") {
+            var pRef = typeof api.getPlayer === "function" ? api.getPlayer() : null;
+            var baseX = pRef ? pRef.x + 120 : 260;
+            var baseY = pRef ? Math.max(120, pRef.y - 80) : 320;
+            for (var spi = 0; spi < ${count}; spi++) {
+              api.spawnEntity("${spawnKind}", {
+                x: baseX + spi * 90,
+                y: baseY - (spi % 2) * 40,
+                gravity: ${spawnKind === "enemy"}
+              });
+            }
+          }
+        `);
+        explanations.push(`Genera ${count} entidad(es) de tipo "${spawnKind}" en la escena HTML5.`);
+        continue;
+      }
+
+      // 13. Imán de monedas
+      if (/\b(iman|imán|atraer\s+monedas|magnet)\b/.test(lower)) {
+        hasSpecificMatch = true;
+        jsActionStatements.push(`
+          var pMag = getTargetEntity(api, "player");
+          var coinsMag = api && typeof api.getEntities === "function" ? api.getEntities("coin") : [];
+          if (pMag && coinsMag.length) {
+            for (var mi = 0; mi < coinsMag.length; mi++) {
+              var cm = coinsMag[mi];
+              var mdx = (pMag.x + pMag.w / 2) - (cm.x + cm.w / 2);
+              var mdy = (pMag.y + pMag.h / 2) - (cm.y + cm.h / 2);
+              var mdist = Math.hypot(mdx, mdy);
+              if (mdist > 1 && mdist < 280) {
+                cm.x += (mdx / mdist) * 260 * (dt || 0.016);
+                cm.y += (mdy / mdist) * 260 * (dt || 0.016);
               }
             }
           }
         `);
-        explanations.push(`Dispara un pulso láser que impacta enemigos cercanos.`);
+        explanations.push(`Activa imán de monedas cercanas hacia el jugador en HTML5.`);
         continue;
       }
 
-      // 10. Onda de energía / Explosión / Partículas
+      // 14. Onda de energía / Explosión / Partículas
       if (/onda|energia|explosion|particula|destello|rayo|magia/.test(lower)) {
         hasSpecificMatch = true;
+        usesSoundWaves = true;
         scriptBlocks.push({
           id: uid(),
           kind: "shake",
@@ -873,36 +1264,39 @@ export function compileUserLanguageLocally(
           text: "powerup",
         });
         jsActionStatements.push(`
-          var pWave = getTargetEntity(api, "player") || { x: 320, y: 200, w: 36, h: 48 };
-          if (api && typeof api.playSound === "function") api.playSound("powerup");
-          if (api && typeof api.shake === "function") api.shake(8, 0.25);
-          if (api && typeof api.emitBurst === "function") {
-            api.emitBurst((pWave.x || 0) + 18, (pWave.y || 0) + 24, "#38bdf8", 18);
+          if (!state.energyWaveCd_${blockIndex} || state.energyWaveCd_${blockIndex} <= 0) {
+            state.energyWaveCd_${blockIndex} = 0.9;
+            var pWave = getTargetEntity(api, "player") || { x: 320, y: 200, w: 36, h: 48 };
+            if (api && typeof api.playSound === "function") api.playSound("powerup");
+            if (api && typeof api.shake === "function") api.shake(8, 0.25);
+            if (api && typeof api.emitBurst === "function") {
+              api.emitBurst((pWave.x || 0) + 18, (pWave.y || 0) + 24, "#38bdf8", 18);
+            }
+            state.soundWaves.push({
+              x: (pWave.x || 0) + ((pWave.w || 36) / 2),
+              y: (pWave.y || 0) + ((pWave.h || 48) / 2),
+              radius: 10,
+              maxRadius: 240,
+              alpha: 1,
+              label: "⚡ ONDA DE ENERGÍA",
+              color: "#38bdf8"
+            });
           }
-          state.soundWaves.push({
-            x: (pWave.x || 0) + ((pWave.w || 36) / 2),
-            y: (pWave.y || 0) + ((pWave.h || 48) / 2),
-            radius: 10,
-            maxRadius: 240,
-            alpha: 1,
-            label: "⚡ ONDA DE ENERGÍA",
-            color: "#38bdf8"
-          });
         `);
         explanations.push(`Genera una onda de energía visual y partículas en el mapa.`);
         continue;
       }
 
-      // 11. Decir / Mostrar texto o mensaje
-      if (/decir|mostrar|mensaje|texto|avisar|alerta/.test(lower) || quotedMatch) {
+      // 15. Decir / Mostrar texto o mensaje (bocadillo sobre la entidad, sin radar)
+      if (/\b(decir|dice|mostrar\s+texto|mensaje|hablar|habla|avisar|alerta)\b/.test(lower) || quotedMatch) {
         hasSpecificMatch = true;
         const msg =
           quotedMatch?.[1]?.trim() ||
           rawAction
-            .replace(/^(decir|mostrar|mensaje|avisar|alerta)\s*:?\s*/i, "")
+            .replace(/^(decir|dice|mostrar|mensaje|avisar|alerta|hablar|habla)\s*:?\s*/i, "")
             .split(" (")[0]
             .trim() ||
-          "¡Acción activada!";
+          "¡Listo!";
         scriptBlocks.push({
           id: uid(),
           kind: "sayForSecs",
@@ -910,28 +1304,19 @@ export function compileUserLanguageLocally(
           value: 2.5,
         });
         jsActionStatements.push(`
-          var pMsg = getTargetEntity(api, "player") || { x: 320, y: 180, w: 36, h: 48 };
+          var pMsg = getTargetEntity(api, "player");
           if (pMsg && typeof pMsg === "object") {
             pMsg._bubbleText = ${JSON.stringify(msg.slice(0, 64))};
             pMsg._bubbleKind = "say";
             pMsg._bubbleUntil = ((api && api.state && api.state.time) || 0) + 2.5;
           }
-          state.soundWaves.push({
-            x: (pMsg.x || 0) + ((pMsg.w || 36) / 2),
-            y: (pMsg.y || 0),
-            radius: 10,
-            maxRadius: 190,
-            alpha: 1,
-            label: ${JSON.stringify(msg.slice(0, 48))},
-            color: "#60a5fa"
-          });
         `);
-        explanations.push(`Muestra el mensaje "${msg}" en el mapa.`);
+        explanations.push(`Muestra el diálogo "${msg}" sobre la entidad en el juego.`);
         continue;
       }
 
-      // 12. Teletransportar / Posición
-      if (/teletransport|transportar|mover\s+a|posicion/.test(lower)) {
+      // 16. Teletransportar / Posición
+      if (/teletransport|transportar|mover\s+a|posicion|posici[oó]n/.test(lower)) {
         hasSpecificMatch = true;
         const coords = rawAction.match(/(-?\d+)\s*[,x\s]\s*(-?\d+)/);
         const tx = coords ? Number(coords[1]) : numVal ?? 200;
@@ -944,14 +1329,41 @@ export function compileUserLanguageLocally(
         });
         jsActionStatements.push(`
           var entTp = getTargetEntity(api, "player");
-          if (entTp) { entTp.x = ${tx}; entTp.y = ${ty}; entTp.vx = 0; entTp.vy = 0; }
+          if (entTp && (!state.tpDone_${blockIndex} || "${eventType}" !== "onUpdate")) {
+            state.tpDone_${blockIndex} = true;
+            entTp.x = ${tx};
+            entTp.y = ${ty};
+            entTp.vx = 0;
+            entTp.vy = 0;
+          }
         `);
         explanations.push(`Teletransporta la entidad a (${tx}, ${ty}).`);
         continue;
       }
 
-      // 13. Cambiar color / tamaño
-      if (/color|pintar/.test(lower)) {
+      // 17. Cambiar color de fondo o color de entidad
+      if (/\b(fondo|cielo|background)\b/.test(lower)) {
+        hasSpecificMatch = true;
+        const hexMatch = rawAction.match(/#[0-9a-fA-F]{3,6}/);
+        const bgColor = hexMatch
+          ? hexMatch[0]
+          : /rojo|red/.test(lower)
+            ? "#450a0a"
+            : /verde|green/.test(lower)
+              ? "#052e16"
+              : /negro|noche|oscuro|dark/.test(lower)
+                ? "#020617"
+                : /morado|purple/.test(lower)
+                  ? "#2e1065"
+                  : "#0b1e3f";
+        jsActionStatements.push(`
+          if (api && typeof api.setBg === "function") { api.setBg(${JSON.stringify(bgColor)}); }
+        `);
+        explanations.push(`Cambia el color de fondo de la escena a ${bgColor}.`);
+        continue;
+      }
+
+      if (/color|pinta|pintar|rojo|verde|amarillo|morado|azul|rosa|naranja|blanco/.test(lower)) {
         hasSpecificMatch = true;
         const hexMatch = rawAction.match(/#[0-9a-fA-F]{3,6}/);
         const color = hexMatch
@@ -964,7 +1376,13 @@ export function compileUserLanguageLocally(
                 ? "#eab308"
                 : /morado|purple/.test(lower)
                   ? "#a855f7"
-                  : "#38bdf8";
+                  : /rosa|pink/.test(lower)
+                    ? "#ec4899"
+                    : /naranja|orange/.test(lower)
+                      ? "#f97316"
+                      : /blanco|white/.test(lower)
+                        ? "#f8fafc"
+                        : "#38bdf8";
         scriptBlocks.push({
           id: uid(),
           kind: "setColor",
@@ -974,13 +1392,17 @@ export function compileUserLanguageLocally(
           var entCol = getTargetEntity(api, "player");
           if (entCol) { entCol.color = ${JSON.stringify(color)}; }
         `);
-        explanations.push(`Cambia el color a ${color}.`);
+        explanations.push(`Cambia el color de la entidad a ${color}.`);
         continue;
       }
 
-      if (/tamaño|escala|agrandar|encoger|gigante|pequeño/.test(lower)) {
+      if (/tamaño|tamano|escala|agrandar|agranda|encoger|encoge|gigante|pequeño|pequeno|grande|chico/.test(lower)) {
         hasSpecificMatch = true;
-        const factor = /encoger|pequeño/.test(lower) ? 0.7 : /gigante/.test(lower) ? 1.8 : 1.35;
+        const factor = /encoger|encoge|pequeño|pequeno|chico/.test(lower)
+          ? 0.68
+          : /gigante/.test(lower)
+            ? 1.75
+            : 1.35;
         scriptBlocks.push({
           id: uid(),
           kind: "setSize",
@@ -988,17 +1410,18 @@ export function compileUserLanguageLocally(
         });
         jsActionStatements.push(`
           var entSz = getTargetEntity(api, "player");
-          if (entSz) {
-            entSz.w = Math.max(8, Math.round((entSz.w || 40) * ${factor}));
-            entSz.h = Math.max(8, Math.round((entSz.h || 40) * ${factor}));
+          if (entSz && !entSz._scaled_${blockIndex}) {
+            entSz._scaled_${blockIndex} = true;
+            entSz.w = Math.max(12, Math.round((entSz.w || 40) * ${factor}));
+            entSz.h = Math.max(12, Math.round((entSz.h || 48) * ${factor}));
           }
         `);
-        explanations.push(`Escala el tamaño por ${factor}.`);
+        explanations.push(`Escala el tamaño de la entidad por ${factor}.`);
         continue;
       }
 
-      // 14. Ganar / Perder
-      if (/\b(ganar|victoria|completar\s+nivel)\b/.test(lower)) {
+      // 18. Ganar / Perder
+      if (/\b(ganar|gana|victoria|completar\s+nivel|win)\b/.test(lower)) {
         hasSpecificMatch = true;
         scriptBlocks.push({ id: uid(), kind: "win" });
         jsActionStatements.push(`
@@ -1008,7 +1431,7 @@ export function compileUserLanguageLocally(
         continue;
       }
 
-      if (/\b(perder|derrota|morir|game\s*over)\b/.test(lower)) {
+      if (/\b(perder|pierde|derrota|morir|muere|game\s*over|lose)\b/.test(lower)) {
         hasSpecificMatch = true;
         scriptBlocks.push({ id: uid(), kind: "lose" });
         jsActionStatements.push(`
@@ -1018,10 +1441,16 @@ export function compileUserLanguageLocally(
         continue;
       }
 
-      // 15. Gravedad / Destruir
-      if (/gravedad/.test(lower)) {
+      // 19. Gravedad / Destruir
+      if (/gravedad|gravity/.test(lower)) {
         hasSpecificMatch = true;
-        const gVal = numVal !== null ? Math.max(0, numVal) : 800;
+        const gVal = /sin\s+gravedad|cero/.test(lower)
+          ? 0
+          : /baja|lunar|poca/.test(lower)
+            ? 420
+            : numVal !== null
+              ? Math.max(0, numVal)
+              : 800;
         scriptBlocks.push({
           id: uid(),
           kind: "setSceneGravity",
@@ -1034,49 +1463,19 @@ export function compileUserLanguageLocally(
         continue;
       }
 
-      if (/destruir|eliminar|borrar|desaparecer/.test(lower)) {
+      if (/destruir|destruye|eliminar|elimina|borrar|borra|desaparecer|desaparece|matar|mata/.test(lower)) {
         hasSpecificMatch = true;
         scriptBlocks.push({
           id: uid(),
           kind: "destroySelf",
         });
         jsActionStatements.push(`
-          var entRm = getTargetEntity(api);
+          var entRm = getTargetEntity(api, /enemigo|enemy/.test(${JSON.stringify(lower)}) ? "enemy" : undefined);
           if (entRm && api && typeof api.removeEntity === "function") { api.removeEntity(entRm.id); }
         `);
-        explanations.push(`Destruye la entidad objetivo al cumplirse la regla.`);
+        explanations.push(`Elimina la entidad objetivo al cumplirse la condición.`);
         continue;
       }
-
-      // Fallback universal: cualquier instrucción inventada por el usuario se traduce en HTML5 ejecutable
-      const cleanLabel = rawAction.split(" (")[0].trim().slice(0, 44);
-      scriptBlocks.push({
-        id: uid(),
-        kind: "sayForSecs",
-        text: cleanLabel,
-        value: 2,
-      });
-      scriptBlocks.push({
-        id: uid(),
-        kind: "playSound",
-        text: "powerup",
-      });
-      jsActionStatements.push(`
-        var pCustom = getTargetEntity(api, "player") || { x: 320, y: 200, w: 36, h: 48 };
-        if (api && typeof api.playSound === "function") api.playSound("powerup");
-        state.soundWaves.push({
-          x: (pCustom.x || 0) + ((pCustom.w || 36) / 2),
-          y: (pCustom.y || 0) + ((pCustom.h || 48) / 2),
-          radius: 10,
-          maxRadius: 210,
-          alpha: 1,
-          label: ${JSON.stringify(cleanLabel)},
-          color: "#38bdf8"
-        });
-      `);
-      explanations.push(
-        `Ejecuta la instrucción personalizada "${cleanLabel}" en HTML5.`
-      );
     }
 
     const scriptObj: Script = {
@@ -1088,7 +1487,7 @@ export function compileUserLanguageLocally(
       blocks: scriptBlocks,
       customLanguageCode: `${block.header}\n${block.actions.map((a) => a.split(" (")[0]).join("\n")}`,
       languageName: lang.name,
-      aiExplanation: explanations[explanations.length - 1] || `Traducido a HTML5 desde ${lang.name}`,
+      aiExplanation: explanations[explanations.length - 1] || `Compilado a HTML5.`,
     };
     compiledScripts.push(scriptObj);
 
@@ -1222,12 +1621,20 @@ export function compileUserLanguageLocally(
     `    }`,
     `    return typeof api.getPlayer === "function" ? api.getPlayer() : (all[0] || null);`,
     `  }`,
-    `  var state = { soundWaves: [], flashAlpha: 0 };`,
+    `  var state = {};`,
     `  window.AsternalRuntime.registerHook({`,
     `    id: ${JSON.stringify(programId)},`,
-    `    onInit: function(api) {`,
-    `      state.soundWaves = [];`,
-    `    },`,
+    jsInitSections.length > 0 || usesSoundWaves || usesShots
+      ? [
+          `    onInit: function(api) {`,
+          usesSoundWaves ? `      state.soundWaves = [];` : "",
+          usesShots ? `      state.shots = [];` : "",
+          jsInitSections.length > 0 ? `      ${jsInitSections.join("\n")}` : "",
+          `    },`,
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : "",
     jsKeyDownSections.length > 0
       ? `    onKeyDown: function(code, key, api) {\n${jsKeyDownSections.join("\n")}\n    },`
       : "",
@@ -1236,40 +1643,51 @@ export function compileUserLanguageLocally(
       : "",
     `    onTick: function(api, dt) {`,
     `      ${jsHookSections.join("\n")}`,
-    `      for (var i = state.soundWaves.length - 1; i >= 0; i--) {`,
-    `        var w = state.soundWaves[i];`,
-    `        w.radius += (dt || 0.016) * 210;`,
-    `        w.alpha = Math.max(0, 1 - (w.radius / (w.maxRadius || 260)));`,
-    `        if (w.alpha <= 0.02) state.soundWaves.splice(i, 1);`,
-    `      }`,
+    usesSoundWaves
+      ? [
+          `      for (var i = state.soundWaves.length - 1; i >= 0; i--) {`,
+          `        var w = state.soundWaves[i];`,
+          `        w.radius += (dt || 0.016) * 210;`,
+          `        w.alpha = Math.max(0, 1 - (w.radius / (w.maxRadius || 260)));`,
+          `        if (w.alpha <= 0.02) state.soundWaves.splice(i, 1);`,
+          `      }`,
+        ].join("\n")
+      : "",
     `    },`,
-    `    onRenderOverlay: function(ctx, api, W, H) {`,
-    `      if (!ctx || !state.soundWaves.length) return;`,
-    `      var camX = (api && api.camera && api.camera.x) || 0;`,
-    `      var camY = (api && api.camera && api.camera.y) || 0;`,
-    `      ctx.save();`,
-    `      for (var i = 0; i < state.soundWaves.length; i++) {`,
-    `        var w = state.soundWaves[i];`,
-    `        var sx = w.x - camX;`,
-    `        var sy = w.y - camY;`,
-    `        ctx.strokeStyle = w.color || "#38bdf8";`,
-    `        ctx.globalAlpha = w.alpha;`,
-    `        ctx.lineWidth = 3;`,
-    `        ctx.beginPath();`,
-    `        ctx.arc(sx, sy, w.radius, 0, Math.PI * 2);`,
-    `        ctx.stroke();`,
-    `        ctx.beginPath();`,
-    `        ctx.arc(sx, sy, Math.max(4, w.radius * 0.55), 0, Math.PI * 2);`,
-    `        ctx.stroke();`,
-    `        if (w.label) {`,
-    `          ctx.font = "bold 12px Inter, system-ui, sans-serif";`,
-    `          ctx.fillStyle = "#f8fafc";`,
-    `          ctx.textAlign = "center";`,
-    `          ctx.fillText(w.label, sx, sy - Math.min(48, w.radius * 0.45) - 10);`,
-    `        }`,
-    `      }`,
-    `      ctx.restore();`,
-    `    }`,
+    jsRenderSections.length > 0
+      ? `    onRender: function(ctx, api) {\n${jsRenderSections.join("\n")}\n    },`
+      : "",
+    usesSoundWaves
+      ? [
+          `    onRenderOverlay: function(ctx, api, W, H) {`,
+          `      if (!ctx || !state.soundWaves.length) return;`,
+          `      var camX = (api && api.camera && api.camera.x) || 0;`,
+          `      var camY = (api && api.camera && api.camera.y) || 0;`,
+          `      ctx.save();`,
+          `      for (var i = 0; i < state.soundWaves.length; i++) {`,
+          `        var w = state.soundWaves[i];`,
+          `        var sx = w.x - camX;`,
+          `        var sy = w.y - camY;`,
+          `        ctx.strokeStyle = w.color || "#38bdf8";`,
+          `        ctx.globalAlpha = w.alpha;`,
+          `        ctx.lineWidth = 3;`,
+          `        ctx.beginPath();`,
+          `        ctx.arc(sx, sy, w.radius, 0, Math.PI * 2);`,
+          `        ctx.stroke();`,
+          `        ctx.beginPath();`,
+          `        ctx.arc(sx, sy, Math.max(4, w.radius * 0.55), 0, Math.PI * 2);`,
+          `        ctx.stroke();`,
+          `        if (w.label) {`,
+          `          ctx.font = "bold 12px Inter, system-ui, sans-serif";`,
+          `          ctx.fillStyle = "#f8fafc";`,
+          `          ctx.textAlign = "center";`,
+          `          ctx.fillText(w.label, sx, sy - Math.min(48, w.radius * 0.45) - 10);`,
+          `        }`,
+          `      }`,
+          `      ctx.restore();`,
+          `    }`,
+        ].join("\n")
+      : "",
     `  });`,
     `})();`,
   ]
@@ -1290,8 +1708,9 @@ export function compileUserLanguageLocally(
     synthSounds,
     explanation:
       explanations.join(" ") ||
-      `Código en "${lang.name}" interpretado y traducido a JavaScript/HTML5 + ${compiledScripts.length} bloque(s) del motor.`,
+      `Código en "${lang.name}" interpretado y traducido a script HTML5 independiente.`,
     detectedKeywords,
     hasSpecificMatch,
   };
 }
+

@@ -47,7 +47,7 @@ function getGeminiClient(): GoogleGenAI | null {
 }
 
 function resolveGeminiModel(requested?: string): string {
-  if (!requested || requested === "gemini-3.8-flash") return "gemini-3-flash-preview";
+  if (!requested || requested === "gemini-2.5-flash") return "gemini-3-flash-preview";
   if (requested.startsWith("gemini-")) return requested;
   return "gemini-3-flash-preview";
 }
@@ -67,16 +67,16 @@ export async function invokeLLM(request: LLMRequest): Promise<LLMResponse> {
 
   const conversationTurns = request.messages.filter((m) => m.role !== "system");
 
-  // 1) Ruta principal: SDK oficial @google/genai en el servidor (con reintento en modelos alternativos si hay sobrecarga 503)
+  // 1) Ruta principal: SDK oficial @google/genai en el servidor
   const ai = getGeminiClient();
   if (ai) {
     const primaryModel = resolveGeminiModel(request.model);
     const candidateModels = Array.from(
       new Set([
-        primaryModel,
         "gemini-3-flash-preview",
-        "gemini-2.5-flash",
-        "gemini-3.1-flash-lite-preview",
+        primaryModel,
+        "gemini-3.8-flash",
+        "gemini-flash-latest",
       ]),
     );
     const contents =
@@ -106,8 +106,7 @@ export async function invokeLLM(request: LLMRequest): Promise<LLMResponse> {
             choices: [{ message: { content: text } }],
           };
         }
-      } catch (err) {
-        console.error(`[invokeLLM @google/genai error (${modelName})]`, err);
+      } catch {
         // Intenta el siguiente modelo de respaldo o continúa al siguiente proveedor
       }
     }
@@ -173,7 +172,7 @@ export async function invokeLLM(request: LLMRequest): Promise<LLMResponse> {
   }
 
   return {
-    model: payload.service || "gemini-3-flash-preview",
+    model: payload.service || "gemini-3.8-flash",
     choices: [{ message: { content: payload.response.trim() } }],
   };
 }
@@ -182,7 +181,7 @@ export async function invokeLLM(request: LLMRequest): Promise<LLMResponse> {
 export async function listLLMModels(): Promise<{ data: Array<{ id: string }> }> {
   if (process.env.GEMINI_API_KEY?.trim()) {
     return {
-      data: [{ id: "gemini-3-flash-preview" }],
+      data: [{ id: "gemini-3.8-flash" }],
     };
   }
   const forgeUrl = process.env.BUILT_IN_FORGE_API_URL?.trim();
@@ -201,6 +200,6 @@ export async function listLLMModels(): Promise<{ data: Array<{ id: string }> }> 
     }
   }
   return {
-    data: [{ id: "gemini-3-flash-preview" }],
+    data: [{ id: "gemini-3.8-flash" }],
   };
 }

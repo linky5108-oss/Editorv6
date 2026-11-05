@@ -7,6 +7,7 @@ import { drawChibiCharacter } from "@/lib/engine/character";
 import { createScriptRunner, compileScriptToHtml5Js, type RuntimeHooks, type UIScriptPhase } from "@/lib/engine/scripts";
 import { startMusic, stopMusic, setVolume, setMuted } from "@/lib/engine/sfx";
 import { createGameHtmlBlobUrl } from "@/lib/engine/html5-game";
+import { sanitizeOrUpgradeHtml5ScriptJs } from "@/lib/ai/custom-language";
 
 function drawUIElement(
   ctx: CanvasRenderingContext2D,
@@ -433,14 +434,18 @@ export function LegacyCanvasGameRuntime({
       },
     };
 
+    const pressedKeys: Record<string, boolean> = {};
     const runtimeApi = {
+      canvas,
+      ctx,
+      keys: pressedKeys,
       get scene() { return work; },
       get state() { return state; },
-      get input() { return inputRef.current; },
+      get input() { return Object.assign(inputRef.current, { keys: pressedKeys }); },
       camera: { x: 0, y: 0, scale: 1 },
       getScene: () => work,
       getState: () => state,
-      getInput: () => inputRef.current,
+      getInput: () => Object.assign(inputRef.current, { keys: pressedKeys }),
       getPlayer: () => work.entities.find(e => (e.controllable || e.kind === "player") && e.x > -9000) ?? null,
       getScore: () => state.score,
       getLives: () => state.lives,
@@ -448,7 +453,46 @@ export function LegacyCanvasGameRuntime({
         kind
           ? work.entities.filter(e => e.kind === kind && e.x > -9000)
           : work.entities.filter(e => e.x > -9000),
-      spawnEntity: (kindOrPreset: string | Partial<Entity>, overrides?: Partial<Entity>) => {
+      spawnEntity: (
+        kindOrPreset: string | Partial<Entity>,
+        xOrOverrides?: number | Partial<Entity>,
+        yOpt?: number,
+        overridesOpt?: Partial<Entity>,
+      ) => {
+        const extraOverrides: Partial<Entity> & Record<string, unknown> =
+          typeof xOrOverrides === "number"
+            ? {
+                ...(overridesOpt ?? {}),
+                x: xOrOverrides,
+                ...(typeof yOpt === "number" ? { y: yOpt } : {}),
+              }
+            : { ...(xOrOverrides ?? {}) };
+
+        if (
+          typeof kindOrPreset === "string" &&
+          (kindOrPreset === "particle" || kindOrPreset === "spark" || kindOrPreset === "fire" || kindOrPreset === "smoke")
+        ) {
+          const px = typeof extraOverrides.x === "number" && Number.isFinite(extraOverrides.x) ? extraOverrides.x : 100;
+          const py = typeof extraOverrides.y === "number" && Number.isFinite(extraOverrides.y) ? extraOverrides.y : 100;
+          const pvx = typeof extraOverrides.vx === "number" && Number.isFinite(extraOverrides.vx) ? extraOverrides.vx : (Math.random() - 0.5) * 120;
+          const pvy = typeof extraOverrides.vy === "number" && Number.isFinite(extraOverrides.vy) ? extraOverrides.vy : -40 - Math.random() * 80;
+          const plife = typeof extraOverrides.life === "number" && extraOverrides.life > 0 ? extraOverrides.life : 0.45;
+          const psize = typeof extraOverrides.size === "number" && extraOverrides.size > 0 ? extraOverrides.size : (typeof extraOverrides.w === "number" ? extraOverrides.w : 4);
+          const pcolor = typeof extraOverrides.color === "string" ? extraOverrides.color : "#38bdf8";
+          particles.push({
+            x: px,
+            y: py,
+            vx: pvx,
+            vy: pvy,
+            life: plife,
+            max: plife,
+            color: pcolor,
+            size: psize,
+            gravity: extraOverrides.gravity === false ? 0 : 300,
+          });
+          return null;
+        }
+
         const base: Partial<Entity> =
           typeof kindOrPreset === "string"
             ? {
@@ -457,9 +501,9 @@ export function LegacyCanvasGameRuntime({
                 h: 32,
                 vx: 0,
                 vy: 0,
-                color: "#fbbf24",
-                solid: false,
-                gravity: false,
+                color: kindOrPreset === "enemy" ? "#ef4444" : kindOrPreset === "platform" ? "#3b82f6" : "#fbbf24",
+                solid: kindOrPreset === "platform",
+                gravity: kindOrPreset === "enemy" || kindOrPreset === "player",
                 controllable: false,
                 collectible: kindOrPreset === "coin",
                 hazard: kindOrPreset === "enemy",
@@ -469,13 +513,17 @@ export function LegacyCanvasGameRuntime({
                 texture: null,
               }
             : kindOrPreset;
-        const ent: Entity = {
+        const resolvedW = typeof extraOverrides.w === "number" ? extraOverrides.w : typeof extraOverrides.width === "number" ? Number(extraOverrides.width) : (base.w ?? 32);
+        const resolvedH = typeof extraOverrides.h === "number" ? extraOverrides.h : typeof extraOverrides.height === "number" ? Number(extraOverrides.height) : (base.h ?? 32);
+        const ent: Entity & Record<string, unknown> = {
           id: Math.random().toString(36).slice(2, 10),
           kind: "coin",
           x: 100,
           y: 100,
-          w: 32,
-          h: 32,
+          w: resolvedW,
+          h: resolvedH,
+          width: resolvedW,
+          height: resolvedH,
           vx: 0,
           vy: 0,
           color: "#fbbf24",
@@ -488,9 +536,13 @@ export function LegacyCanvasGameRuntime({
           visible: true,
           opacity: 1,
           texture: null,
+          grounded: false,
+          onGround: false,
           ...base,
-          ...(overrides ?? {}),
+          ...extraOverrides,
         };
+        ent.width = ent.w;
+        ent.height = ent.h;
         work.entities.push(ent);
         drawList = sortedForRender(work).filter(e => !isOnHiddenLayer(work, e));
         return ent;
@@ -553,6 +605,11 @@ export function LegacyCanvasGameRuntime({
     };
 
     winAny.AsternalRuntime = {
+      canvas,
+      ctx,
+      get scene() { return work; },
+      get state() { return state; },
+      get input() { return inputRef.current; },
       physics: runtimePhysics,
       hooks: runtimeHooksList,
       api: runtimeApi,
@@ -588,37 +645,75 @@ export function LegacyCanvasGameRuntime({
       registerBlock: () => {},
     };
 
-    const html5Snippets: string[] = [];
+    const html5Snippets: Array<{ id: string; code: string }> = [];
     const seenSnippets = new Set<string>();
-    const addHtml5Snippet = (rawJs?: string | null) => {
-      const clean = rawJs?.trim();
+    const addHtml5Snippet = (
+      rawJs?: string | null,
+      fallbackSource?: string | null,
+      entityId?: string | null,
+      entityKind?: Entity["kind"],
+      scriptId?: string,
+    ) => {
+      const clean = sanitizeOrUpgradeHtml5ScriptJs(
+        rawJs,
+        fallbackSource,
+        entityId,
+        entityKind,
+      ).trim();
       if (!clean || seenSnippets.has(clean)) return;
       seenSnippets.add(clean);
-      html5Snippets.push(clean);
+      html5Snippets.push({
+        id: scriptId || `html5-script-${html5Snippets.length + 1}`,
+        code: clean,
+      });
     };
 
-    addHtml5Snippet(customRuntime?.jsCode);
+    const baseJsCode = (customRuntime?.jsCode || "")
+      .replace(/\/\/ \[BEGIN_USER_LANG_PROGRAM:[^\]]+\][\s\S]*?\/\/ \[END_USER_LANG_PROGRAM:[^\]]+\]\n?/g, "")
+      .trim();
+    if (baseJsCode) {
+      addHtml5Snippet(baseJsCode, null, null, undefined, "scene-runtime");
+    }
     for (const ent of initial.entities ?? []) {
       for (const sc of ent.scripts ?? []) {
         if (sc.compiledJs && sc.compiledJs.trim()) {
-          addHtml5Snippet(sc.compiledJs);
+          addHtml5Snippet(sc.compiledJs, sc.customLanguageCode, ent.id, ent.kind, sc.id);
         } else if (sc.customLanguageCode && sc.customLanguageCode.trim()) {
-          addHtml5Snippet(compileScriptToHtml5Js(sc, ent.id, ent.kind));
+          addHtml5Snippet(
+            compileScriptToHtml5Js(sc, ent.id, ent.kind),
+            sc.customLanguageCode,
+            ent.id,
+            ent.kind,
+            sc.id,
+          );
         }
       }
     }
     for (const uel of initial.ui ?? []) {
       for (const sc of uel.scripts ?? []) {
         if (sc.compiledJs && sc.compiledJs.trim()) {
-          addHtml5Snippet(sc.compiledJs);
+          addHtml5Snippet(sc.compiledJs, sc.customLanguageCode, uel.id, undefined, sc.id);
         }
       }
     }
+    if (html5Snippets.length === 0 && customRuntime?.jsCode?.trim()) {
+      addHtml5Snippet(customRuntime.jsCode, null, null, undefined, "scene-runtime");
+    }
 
+    const mountedScriptElements: HTMLScriptElement[] = [];
     for (const snippet of html5Snippets) {
       try {
-        const fn = new Function(snippet);
-        fn();
+        if (typeof document !== "undefined" && document.body) {
+          const scriptEl = document.createElement("script");
+          scriptEl.type = "text/javascript";
+          scriptEl.setAttribute("data-asternal-script-id", snippet.id);
+          scriptEl.text = `try {\n${snippet.code}\n} catch (err) { console.warn("[Asternal HTML5 Script]", err); }`;
+          document.body.appendChild(scriptEl);
+          mountedScriptElements.push(scriptEl);
+        } else {
+          const fn = new Function(snippet.code);
+          fn();
+        }
       } catch (err) {
         console.warn("[Asternal HTML5 Script]", err);
       }
@@ -639,6 +734,8 @@ export function LegacyCanvasGameRuntime({
     const onKeyDown = (e: KeyboardEvent) => {
       const code = e.code || e.key;
       const key = e.key;
+      if (code) pressedKeys[code] = true;
+      if (key) pressedKeys[key] = true;
       if (code === "ArrowLeft" || code === "KeyA" || key === "a" || key === "A") {
         keySrc.current.left = true;
         recomputeInput();
@@ -666,6 +763,8 @@ export function LegacyCanvasGameRuntime({
     const onKeyUp = (e: KeyboardEvent) => {
       const code = e.code || e.key;
       const key = e.key;
+      if (code) pressedKeys[code] = false;
+      if (key) pressedKeys[key] = false;
       if (code === "ArrowLeft" || code === "KeyA" || key === "a" || key === "A") {
         keySrc.current.left = false;
         recomputeInput();
@@ -1097,6 +1196,9 @@ export function LegacyCanvasGameRuntime({
       cancelAnimationFrame(raf);
       window.clearInterval(timer);
       ro?.disconnect();
+      for (const el of mountedScriptElements) {
+        try { el.remove(); } catch { /* ignore */ }
+      }
       uiScriptsRef.current = null;
       workRef.current = null;
       window.removeEventListener("resize", resize);
@@ -1214,6 +1316,7 @@ export function LegacyCanvasGameRuntime({
   return (
     <div data-no-drawably className="relative h-full w-full bg-[#0b1e3f] overflow-hidden select-none">
       <canvas
+        id="game-canvas"
         ref={canvasRef}
         className="h-full w-full block touch-none"
         onPointerDown={onCanvasDown}

@@ -575,6 +575,59 @@ describe("motor y vista previa HTML5 autónomos (independientes del editor)", ()
     expect(scriptEditorSource).not.toContain("TRADUCIR Y CREAR SCRIPT CON IA");
     expect(scriptEditorSource).toContain("Aplicando...");
     expect(scriptEditorSource).toContain("Aplicar");
+
+    // Verifica que "jugador salta" edite realmente la física de salto en HTML5 como script independiente sin generar placeholders de ondas
+    const jumpCompiled = compileUserLanguageLocally("jugador salta", DEFAULT_USER_LANGUAGE);
+    expect(jumpCompiled.compiledJs).toContain("pJump.vy = -");
+    expect(jumpCompiled.compiledJs).not.toContain("state.soundWaves.push");
+
+    const sceneWithJumpScript = newScene("Nivel Salto Independiente");
+    sceneWithJumpScript.entities[0].scripts = jumpCompiled.compiledScripts;
+    const htmlWithIndependentScript = buildStandaloneGameHtml({
+      scene: sceneWithJumpScript,
+      scenes: [sceneWithJumpScript],
+    });
+    expect(htmlWithIndependentScript).toContain("data-asternal-script-id=");
+    expect(htmlWithIndependentScript).toContain("pJump.vy = -");
+
+    // Verifica que un proyecto con el antiguo placeholder en customRuntime.jsCode se actualice automáticamente al sincronizar
+    const legacyProject = newProject();
+    legacyProject.customRuntime = {
+      jsCode: [
+        "// [BEGIN_USER_LANG_PROGRAM:ulp-legacy]",
+        "// Programa (AsternalLang Propio): jugador= salto",
+        "(function() {",
+        "  window.AsternalRuntime.registerHook({",
+        "    onTick: function(api) {",
+        '      var state = { soundWaves: [] }; state.soundWaves.push({ x: 0, y: 0, r: 8, maxR: 150, alpha: 0.9, color: "#38bdf8", label: "jugador= salto" });',
+        "    }",
+        "  });",
+        "})();",
+        "// [END_USER_LANG_PROGRAM:ulp-legacy]",
+      ].join("\n"),
+    };
+    const upgradedLegacyProject = syncRuntimeAndTexturesToProject(legacyProject);
+    expect(upgradedLegacyProject.customRuntime?.jsCode).not.toContain("state.soundWaves.push");
+    expect(upgradedLegacyProject.customRuntime?.jsCode).toContain("pJump.vy = -");
+
+    // Verifica que las instrucciones editen verdaderamente el proyecto (entidades, colores, tamaños y propiedades de escena)
+    const baseProj = newProject();
+    const initialCoins = baseProj.scenes[0].entities.filter((e) => e.kind === "coin").length;
+    const editPatch = buildOrionIntelligentPatch(
+      "hacer al jugador rojo y grande, añadir 4 monedas, fondo espacial y gravedad lunar",
+      baseProj,
+    );
+    const editedProj = applyOrionPatchToProject(baseProj, editPatch);
+    const editedScene = editedProj.scenes[0];
+    const editedPlayer = editedScene.entities.find((e) => e.kind === "player")!;
+    const afterCoins = editedScene.entities.filter((e) => e.kind === "coin").length;
+
+    expect(editedPlayer.color).toBe("#ef4444");
+    expect(editedPlayer.w).toBeGreaterThan(40);
+    expect(editedPlayer.h).toBeGreaterThan(56);
+    expect(afterCoins).toBe(initialCoins + 4);
+    expect(editedScene.gravity).toBe(460);
+    expect(editedScene.bg).toBe("#050816");
   });
 });
 

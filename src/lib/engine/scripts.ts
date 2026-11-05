@@ -902,6 +902,23 @@ function normalizedList(block: Block): Block[] {
  * un script con IA**, de modo que el resultado siga siendo el mismo script (con
  * su contexto y sus cambios previos) en lugar de uno nuevo.
  */
+const EVENT_ALIAS_MAP: Record<string, EventType> = {
+  onTick: "onUpdate",
+  onFrame: "onUpdate",
+  onStep: "onUpdate",
+  onInit: "onStart",
+  onReady: "onStart",
+  onKey: "onKeyDown",
+  onKeyPress: "onKeyDown",
+  onKeySpace: "onKeyDown",
+  onCollision: "onCollide",
+  onHit: "onCollide",
+  onTouch: "onCollide",
+  onDeath: "onLose",
+  onGameOver: "onLose",
+  onVictory: "onWin",
+};
+
 export function normalizeScript(raw: unknown, fallbackId?: string): Script | null {
   if (!raw || typeof raw !== "object") return null;
   const source = raw as Partial<Script> & { customRuntimeJs?: string; jsCode?: string };
@@ -913,11 +930,13 @@ export function normalizeScript(raw: unknown, fallbackId?: string): Script | nul
         : typeof source.jsCode === "string" && source.jsCode.trim()
           ? source.jsCode.trim()
           : undefined;
-  const event = typeof source.event === "string" && source.event in EVENT_LABELS
-    ? (source.event as EventType)
-    : rawHtml5Js
-      ? "onStart"
+  const rawEventStr = typeof source.event === "string" ? source.event.trim() : "";
+  const mappedEvent = rawEventStr in EVENT_LABELS
+    ? (rawEventStr as EventType)
+    : rawEventStr in EVENT_ALIAS_MAP
+      ? EVENT_ALIAS_MAP[rawEventStr]
       : null;
+  const event: EventType | null = mappedEvent ?? (rawHtml5Js ? "onUpdate" : null);
   if (!event) return null;
 
   const script: Script = {
@@ -1042,7 +1061,7 @@ export function compileScriptToHtml5Js(
         break;
     }
   }
-  const body = statements.join("\n        ") || `if (api && api.playSound) api.playSound("powerup");`;
+  const body = statements.join("\n        ");
   const tgtId = targetEntityId ? JSON.stringify(targetEntityId) : "null";
   const tgtKind = targetEntityKind ? JSON.stringify(targetEntityKind) : "null";
   const ev = script.event || "onStart";

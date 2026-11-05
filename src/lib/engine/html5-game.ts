@@ -2,6 +2,7 @@ import type { CustomRuntimeConfig, CustomSoundSynth, Entity, Project, Scene, Spr
 import { DEFAULT_LAYER_ID, MAIN_GOAL_PRESET, ensureSceneLayers, isMainGoalEntity, uid } from "./core";
 import { shadeColor } from "./character";
 import { loadCustomSounds, type CustomSound } from "./sfx";
+import { isLegacyPlaceholderScriptJs, sanitizeOrUpgradeHtml5ScriptJs } from "../ai/custom-language";
 
 export interface Html5GameOptions {
   /** Escena inicial que se va a ejecutar. */
@@ -147,16 +148,38 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
   const safeTitle = escapeHtmlText(title);
   const customCss = (customRuntime?.cssCode ?? "").trim();
   const collectedEntityJsChunks: string[] = [];
+  const independentScriptTags: string[] = [];
   if (customRuntime?.jsCode?.trim()) {
-    collectedEntityJsChunks.push(customRuntime.jsCode.trim());
+    const cleanRuntimeJs = sanitizeOrUpgradeHtml5ScriptJs(
+      customRuntime.jsCode
+        .replace(/\/\/ \[BEGIN_USER_LANG_PROGRAM:[^\]]+\][\s\S]*?\/\/ \[END_USER_LANG_PROGRAM:[^\]]+\]\n?/g, "")
+        .trim(),
+    );
+    if (cleanRuntimeJs) {
+      collectedEntityJsChunks.push(cleanRuntimeJs);
+    }
   }
   for (const sc of allScenes) {
     for (const ent of sc.entities ?? []) {
       for (const s of ent.scripts ?? []) {
-        if (s.compiledJs && s.compiledJs.trim()) {
-          const snippet = s.compiledJs.trim();
-          if (!collectedEntityJsChunks.some((c) => c.includes(snippet))) {
+        if ((s.compiledJs && s.compiledJs.trim()) || (s.customLanguageCode && s.customLanguageCode.trim())) {
+          const snippet = sanitizeOrUpgradeHtml5ScriptJs(
+            s.compiledJs,
+            s.customLanguageCode,
+            ent.id,
+            ent.kind,
+          ).trim();
+          if (snippet && !collectedEntityJsChunks.some((c) => c.includes(snippet))) {
             collectedEntityJsChunks.push(snippet);
+            const safeSnippet = snippet.replace(/<\/script/gi, "<\\/script");
+            try {
+              new Function(safeSnippet);
+              independentScriptTags.push(
+                `<script id="asternal-script-${escapeHtmlText(s.id)}" data-asternal-script-id="${escapeHtmlText(s.id)}" data-entity-id="${escapeHtmlText(ent.id)}">\n${safeSnippet}\n</script>`,
+              );
+            } catch {
+              // Ignorar si tiene error de sintaxis
+            }
           }
         }
       }
@@ -164,8 +187,8 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     for (const uiEl of sc.ui ?? []) {
       for (const s of uiEl.scripts ?? []) {
         if (s.compiledJs && s.compiledJs.trim()) {
-          const snippet = s.compiledJs.trim();
-          if (!collectedEntityJsChunks.some((c) => c.includes(snippet))) {
+          const snippet = sanitizeOrUpgradeHtml5ScriptJs(s.compiledJs, s.customLanguageCode).trim();
+          if (snippet && !collectedEntityJsChunks.some((c) => c.includes(snippet))) {
             collectedEntityJsChunks.push(snippet);
           }
         }
@@ -183,6 +206,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
   const customJs = customJsIsSyntacticallyValid
     ? sanitizedCustomJs
     : `/* Error de sintaxis en script personalizado omitido */\n// ${sanitizedCustomJs.replace(/\r?\n/g, "\n// ")}`;
+  const extraIndependentScriptsHtml = independentScriptTags.length > 0 ? `\n${independentScriptTags.join("\n")}` : "";
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -669,6 +693,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
   // --- Runtime Extension & Hook Registry (Editable in HTML5) ---
   var runtimeHooksList = [];
   var customBlockHandlers = {};
+  var runtimeReady = false;
   var runtimePhysics = {
     baseSpeed: 220,
     jumpForce: 520,
@@ -693,6 +718,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
       if (!normalized.onRender && typeof normalized.onDraw === "function") normalized.onRender = normalized.onDraw;
       if (!normalized.onKeyDown && typeof normalized.onKey === "function") normalized.onKeyDown = normalized.onKey;
       if (!normalized.onInit && typeof normalized.onStart === "function") normalized.onInit = normalized.onStart;
+      var replacedExisting = false;
       if (normalized.id) {
         var existingHookIdx = -1;
         for (var hi = 0; hi < runtimeHooksList.length; hi++) {
@@ -703,11 +729,15 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
         }
         if (existingHookIdx >= 0) {
           runtimeHooksList[existingHookIdx] = normalized;
+          replacedExisting = true;
         } else {
           runtimeHooksList.push(normalized);
         }
       } else {
         runtimeHooksList.push(normalized);
+      }
+      if (runtimeReady && !replacedExisting && typeof normalized.onInit === "function" && window.AsternalRuntime.api) {
+        try { normalized.onInit(window.AsternalRuntime.api); } catch (err) {}
       }
       if (normalized.customBlocks && typeof normalized.customBlocks === "object") {
         Object.keys(normalized.customBlocks).forEach(function(k) {
@@ -1015,8 +1045,27 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     var BASE_SPEED = runtimePhysics.baseSpeed || 220;
     var JUMP = runtimePhysics.jumpForce || 520;
 
-    for (var i0 = 0; i0 < scene.entities.length; i0++) {
+    for (var i0 = scene.entities.length - 1; i0 >= 0; i0--) {
       var e0 = scene.entities[i0];
+      if (!Number.isFinite(e0.w) || e0.w <= 0) {
+        e0.w = typeof e0.width === "number" && Number.isFinite(e0.width) && e0.width > 0 ? e0.width : 32;
+      }
+      if (!Number.isFinite(e0.h) || e0.h <= 0) {
+        e0.h = typeof e0.height === "number" && Number.isFinite(e0.height) && e0.height > 0 ? e0.height : 32;
+      }
+      e0.width = e0.w;
+      e0.height = e0.h;
+      if (!Number.isFinite(e0.x)) e0.x = e0._px !== undefined && Number.isFinite(e0._px) ? e0._px : 100;
+      if (!Number.isFinite(e0.y)) e0.y = e0._py !== undefined && Number.isFinite(e0._py) ? e0._py : 100;
+      if (!Number.isFinite(e0.vx)) e0.vx = 0;
+      if (!Number.isFinite(e0.vy)) e0.vy = 0;
+      if (typeof e0.life === "number") {
+        e0.life -= dt;
+        if (e0.life <= 0) { scene.entities.splice(i0, 1); markDrawListDirty(); continue; }
+      } else if (typeof e0.lifetime === "number") {
+        e0.lifetime -= dt;
+        if (e0.lifetime <= 0) { scene.entities.splice(i0, 1); markDrawListDirty(); continue; }
+      }
       if (e0._px === undefined) { e0._px = e0.x; e0._py = e0.y; }
     }
 
@@ -1225,7 +1274,10 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     for (var ig = 0; ig < scene.entities.length; ig++) {
       var eg = scene.entities[ig];
       if (eg.kind === "platform") continue;
-      eg._grounded = grounded.has(eg.id);
+      var isG = grounded.has(eg.id);
+      eg._grounded = isG;
+      eg.grounded = isG;
+      eg.onGround = isG;
       eg._floor = groundedOn.get(eg.id);
     }
 
@@ -3228,14 +3280,18 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     }
   }
 
+  var pressedKeys = {};
   var runtimeApi = {
+    canvas: canvas,
+    ctx: ctx,
+    keys: pressedKeys,
     get scene() { return work; },
     get state() { return state; },
-    get input() { return input; },
+    get input() { input.keys = pressedKeys; return input; },
     camera: { x: 0, y: 0, scale: 1 },
     getScene: function() { return work; },
     getState: function() { return state; },
-    getInput: function() { return input; },
+    getInput: function() { input.keys = pressedKeys; return input; },
     getPlayer: function() { return findFirstOfKind(work, "player"); },
     getScore: function() { return state.score; },
     getLives: function() { return state.lives; },
@@ -3243,11 +3299,39 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
       if (!kind) return work.entities.filter(function(e) { return e.x > -9000; });
       return work.entities.filter(function(e) { return e.kind === kind && e.x > -9000; });
     },
-    spawnEntity: function(kindOrPreset, overrides) {
+    spawnEntity: function(kindOrPreset, xOrOverrides, yOpt, overridesOpt) {
+      var extraOverrides = typeof xOrOverrides === "number"
+        ? Object.assign({}, overridesOpt || {}, { x: xOrOverrides }, typeof yOpt === "number" ? { y: yOpt } : {})
+        : Object.assign({}, xOrOverrides || {});
+      if (typeof kindOrPreset === "string" && (kindOrPreset === "particle" || kindOrPreset === "spark" || kindOrPreset === "fire" || kindOrPreset === "smoke")) {
+        var px = typeof extraOverrides.x === "number" && Number.isFinite(extraOverrides.x) ? extraOverrides.x : 100;
+        var py = typeof extraOverrides.y === "number" && Number.isFinite(extraOverrides.y) ? extraOverrides.y : 100;
+        var pvx = typeof extraOverrides.vx === "number" && Number.isFinite(extraOverrides.vx) ? extraOverrides.vx : (Math.random() - 0.5) * 120;
+        var pvy = typeof extraOverrides.vy === "number" && Number.isFinite(extraOverrides.vy) ? extraOverrides.vy : -40 - Math.random() * 80;
+        var plife = typeof extraOverrides.life === "number" && extraOverrides.life > 0 ? extraOverrides.life : 0.45;
+        var psize = typeof extraOverrides.size === "number" && extraOverrides.size > 0 ? extraOverrides.size : (typeof extraOverrides.w === "number" ? extraOverrides.w : 4);
+        var pcolor = typeof extraOverrides.color === "string" ? extraOverrides.color : "#38bdf8";
+        pushParticle({
+          x: px,
+          y: py,
+          vx: pvx,
+          vy: pvy,
+          life: plife,
+          max: plife,
+          color: pcolor,
+          size: psize,
+          gravity: extraOverrides.gravity === false ? 0 : 300
+        });
+        return null;
+      }
       var base = typeof kindOrPreset === "string"
         ? (KIND_PRESETS[kindOrPreset] || KIND_PRESETS.coin)
         : kindOrPreset;
-      var ent = Object.assign({}, cloneDeep(base), { id: uid(), x: 100, y: 100 }, overrides || {});
+      var ent = Object.assign({}, cloneDeep(base), { id: uid(), x: 100, y: 100, grounded: false, onGround: false }, extraOverrides);
+      if (typeof extraOverrides.width === "number" && extraOverrides.w === undefined) ent.w = extraOverrides.width;
+      if (typeof extraOverrides.height === "number" && extraOverrides.h === undefined) ent.h = extraOverrides.height;
+      ent.width = ent.w;
+      ent.height = ent.h;
       work.entities.push(ent);
       markDrawListDirty();
       return ent;
@@ -3286,6 +3370,8 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     audio: window.AsternalAudio
   };
   window.AsternalRuntime.api = runtimeApi;
+  window.AsternalRuntime.canvas = canvas;
+  window.AsternalRuntime.ctx = ctx;
 
   try {
   /* __ASTERNAL_CUSTOM_RUNTIME_START__ */
@@ -3312,6 +3398,7 @@ ${customJs}
       try { runtimeHooksList[initIdx].onInit(runtimeApi); } catch (err) { console.error("[onInit]", err); }
     }
   }
+  runtimeReady = true;
 
   // --- Parent Bridge & Visibility ---
   var paused = false;
@@ -3461,7 +3548,7 @@ ${customJs}
     if (!paused) tickFrame(performance.now(), true);
   }, 4);
 })();
-</script>
+</script>${extraIndependentScriptsHtml}
 </body>
 </html>`;
 }
@@ -3755,11 +3842,34 @@ export function syncRuntimeAndTexturesToProject(
   const cleanedScenes = (project.scenes ?? []).map((sc) => {
     let entChanged = false;
     const nextEntities = (sc.entities ?? []).map((ent) => {
-      if (ent.texture && isLegacyGeneratedPlaceholderSvg(ent.texture)) {
+      let nextEnt = ent;
+      if (nextEnt.texture && isLegacyGeneratedPlaceholderSvg(nextEnt.texture)) {
         entChanged = true;
-        return { ...ent, texture: null };
+        nextEnt = { ...nextEnt, texture: null };
       }
-      return ent;
+      if (Array.isArray(nextEnt.scripts) && nextEnt.scripts.length > 0) {
+        let scriptsUpdated = false;
+        const upgradedScripts = nextEnt.scripts.map((scr) => {
+          if (scr.compiledJs && isLegacyPlaceholderScriptJs(scr.compiledJs, scr.customLanguageCode)) {
+            scriptsUpdated = true;
+            return {
+              ...scr,
+              compiledJs: sanitizeOrUpgradeHtml5ScriptJs(
+                scr.compiledJs,
+                scr.customLanguageCode,
+                nextEnt.id,
+                nextEnt.kind,
+              ),
+            };
+          }
+          return scr;
+        });
+        if (scriptsUpdated) {
+          entChanged = true;
+          nextEnt = { ...nextEnt, scripts: upgradedScripts };
+        }
+      }
+      return nextEnt;
     });
     if (!nextEntities.some((ent) => isMainGoalEntity(ent))) {
       entChanged = true;
@@ -3855,7 +3965,11 @@ export function syncRuntimeAndTexturesToProject(
   }
 
   // Extrae sonidos registrados con window.AsternalAudio.registerSound("nombre", { ... }) en customRuntime.jsCode
-  const jsCode = project.customRuntime?.jsCode ?? "";
+  const rawJsCode = project.customRuntime?.jsCode ?? "";
+  const jsCode = rawJsCode && isLegacyPlaceholderScriptJs(rawJsCode)
+    ? sanitizeOrUpgradeHtml5ScriptJs(rawJsCode)
+    : rawJsCode;
+  const jsCodeChanged = jsCode !== rawJsCode;
   const nextSynthSounds: Record<string, CustomSoundSynth> = {
     ...(project.customRuntime?.synthSounds ?? {}),
   };
@@ -3897,7 +4011,7 @@ export function syncRuntimeAndTexturesToProject(
   const spritesChanged = spritesCleaned || existingSprites.length !== rawExistingSprites.length;
   const soundsChanged = Object.keys(nextSynthSounds).length !== Object.keys(project.customRuntime?.synthSounds ?? {}).length;
 
-  if (!scenesChanged && !spritesChanged && !soundsChanged) return project;
+  if (!scenesChanged && !spritesChanged && !soundsChanged && !jsCodeChanged) return project;
 
   return {
     ...project,
@@ -3906,10 +4020,11 @@ export function syncRuntimeAndTexturesToProject(
       ...(project.assets ?? { sprites: [] }),
       sprites: existingSprites,
     },
-    ...(project.customRuntime || soundsChanged
+    ...(project.customRuntime || soundsChanged || jsCodeChanged
       ? {
           customRuntime: {
             ...(project.customRuntime ?? {}),
+            ...(jsCodeChanged ? { jsCode } : {}),
             synthSounds: nextSynthSounds,
           },
         }

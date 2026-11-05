@@ -126,6 +126,7 @@ export function AsternalEditor({ initialProjectId, beta = false }: {
     if (loaded) {
       loaded.scenes = loaded.scenes.map(s => ensureSceneLayers(s));
       loaded = syncRuntimeAndTexturesToProject(loaded);
+      saveProjectById(id, loaded);
     }
     lastSavedRef.current = loaded;
     setDirty(false);
