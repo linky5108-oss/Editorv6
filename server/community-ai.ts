@@ -64,8 +64,7 @@ async function getCommunitySettings(): Promise<CommunitySettings> {
   return parseCommunitySettings(rows[0]?.content);
 }
 
-import { parseAiJson, synthesizeScriptsFromRequest } from "../src/lib/ai/gemini-provider";
-import { compileUserLanguageLocally, DEFAULT_USER_LANGUAGE } from "../src/lib/ai/custom-language";
+import { parseAiJson } from "../src/lib/ai/gemini-provider";
 
 function stripJsonFence(value: string) {
   return value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
@@ -224,7 +223,7 @@ async function getOrionModel(): Promise<string> {
         ?? ids.find(id => id.startsWith("claude-haiku"))
         ?? ids.find(id => id.startsWith("gpt-5"))
         ?? ids[0]
-        ?? "gemini-3-flash-preview";
+        ?? "gemini-3.8-flash";
     });
   }
   return selectedModel;
@@ -369,9 +368,6 @@ REGLAS OBLIGATORIAS PARA MODIFICAR EL JUEGO Y CONECTARLO AL EDITOR NORMAL:
    - Si el usuario ya tenía código en "currentCustomRuntimeJs" y pide añadir otra mecánica, conserva o integra la lógica anterior o usa "appendRuntimeJs": true. Si pide reemplazar o corregir la mecánica anterior, usa "appendRuntimeJs": false.
 7. Si el usuario pide sonidos o efectos de audio:
    - Define los sonidos en "synthSounds" (ej: { "laser": { "name": "laser", "wave": "sawtooth", "freq": 780, "endFreq": 160, "duration": 0.18, "volume": 0.35 } }) y dispáralos con api.playSound("synth:laser") en "customRuntimeJs" o en bloques playSound.
-8. SISTEMA DE LENGUAJE DE PROGRAMACIÓN INVENTADO POR EL USUARIO:
-   - Cada usuario puede inventar su propio lenguaje de programación con sus propias instrucciones, palabras y reglas de sintaxis (por ejemplo: "SI el jugador pierde:\\nMOSTRAR sonido en el mapa").
-   - Actúa como el traductor/compilador oficial: interpreta lo que el usuario escribió en su lenguaje inventado y conviértelo en código JavaScript/HTML5 funcional en "customRuntimeJs" (usando window.AsternalRuntime.registerHook y window.AsternalAudio) y en bloques del motor dentro de "entityUpdates" ("scriptsToAdd").
 
 Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
 {
@@ -393,21 +389,6 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
   "appendRuntimeJs": true
 }`;
 
-function extractUserInstructionFromScriptPrompt(rawPrompt: string): string {
-  const markers = [
-    /Nueva instrucci[oó]n o c[oó]digo(?: en el lenguaje)? del usuario:\s*([\s\S]*?)(?:\n\nReglas obligatorias|\n\nDevuelve SOLO|$)/i,
-    /Petici[oó]n o c[oó]digo(?: en el lenguaje)? del usuario:\s*([\s\S]*?)(?:\n\nDevuelve SOLO|$)/i,
-    /Instrucci[oó]n o c[oó]digo actual del creador para Ori[oó]n:\s*([\s\S]*?)(?:\n\nDevuelve [UÚ]NICAMENTE|$)/i,
-  ];
-  for (const rx of markers) {
-    const m = rx.exec(rawPrompt);
-    if (m?.[1]?.trim()) {
-      return m[1].trim();
-    }
-  }
-  return rawPrompt.slice(0, 800).trim();
-}
-
 export async function editGameWithOrion(input: unknown): Promise<{ patch: Record<string, unknown>; model: string }> {
   const source = input && typeof input === "object" ? input as { instruction?: unknown; projectSummary?: unknown; recentHistory?: unknown } : {};
   const instruction = cleanText(source.instruction, 4_000);
@@ -418,93 +399,48 @@ export async function editGameWithOrion(input: unknown): Promise<{ patch: Record
   }
 
   const model = await getOrionModel();
-  try {
-    const content = await askOrion(
-      [
-        {
-          role: "system",
-          content: ORION_GAME_EDITOR_SYSTEM_PROMPT,
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            instruction,
-            projectState: projectSummary,
-            ...(recentHistory ? { recentConversation: recentHistory } : {}),
-          }),
-        },
-      ],
+  const content = await askOrion(
+    [
       {
-        temperature: 0.35,
-        responseMimeType: "application/json",
+        role: "system",
+        content: ORION_GAME_EDITOR_SYSTEM_PROMPT,
       },
-    );
+      {
+        role: "user",
+        content: JSON.stringify({
+          instruction,
+          projectState: projectSummary,
+          ...(recentHistory ? { recentConversation: recentHistory } : {}),
+        }),
+      },
+    ],
+    {
+      temperature: 0.35,
+      responseMimeType: "application/json",
+    },
+  );
 
-    const parsed = extractJsonObjectFromText(content);
-    return { patch: parsed, model };
-  } catch {
-    const cleanInstruction = instruction.split(/\n\n=== LENGUAJE/i)[0]?.trim() || instruction;
-    const compiled = compileUserLanguageLocally(cleanInstruction, DEFAULT_USER_LANGUAGE);
-    return {
-      patch: {
-        reply: compiled.explanation,
-        changesSummary: [compiled.explanation],
-        customRuntimeJs: compiled.compiledJs,
-        synthSounds: compiled.synthSounds,
-        appendRuntimeJs: true,
-      },
-      model: "gemini-3-flash-preview",
-    };
-  }
+  const parsed = extractJsonObjectFromText(content);
+  return { patch: parsed, model };
 }
-
-const HTML5_SCRIPT_COMPILER_SYSTEM_PROMPT = `Eres el compilador y generador de scripts HTML5 reales del motor Asternal.
-Tu tarea es escribir código HTML5 / JavaScript REAL, genuino y exacto que se ejecuta directamente en el navegador sobre el motor del juego.
-PROHIBIDO inventar líneas de código, mecánicas, efectos, variables o funciones que el usuario NO haya pedido.
-PROHIBIDO usar plantillas simuladas, placeholders o console.log vacíos.
-Deja SIEMPRE "blocks": [] para que la ejecución sea 100% mediante HTML5 en "compiledJs" (y también en "customRuntimeJs") usando ÚNICAMENTE la API real:
-- window.AsternalRuntime.registerHook({ id, onInit(api), onTick(api, dt), onCollide(a, b, api), onKeyDown(code, key, api), onKeyUp(code, key, api), onRender(ctx, api), onRenderOverlay(ctx, api, W, H) })
-- Propiedades reales de cada entidad (api.getPlayer(), api.getEntities(kind)):
-  e.id, e.kind ("player"|"platform"|"coin"|"enemy"|"goal"|"decor"), e.x, e.y, e.w, e.h, e.width, e.height, e.vx, e.vy, e.onGround (boolean), e.grounded (boolean), e.color, e.solid, e.gravity, e.controllable, e.collectible, e.hazard, e.goal, e.visible, e.opacity, e.variables.
-- Estado y métodos reales de api:
-  api.canvas, api.ctx, api.scene (width, height, gravity, bg, entities), api.state (score, lives, time, win, dead, cameraX), api.input (left, right, jump, keys),
-  api.spawnEntity(kind, { x, y, w, h, vx, vy, color, solid, gravity, hazard, collectible }),
-  api.removeEntity(idOrEntity), api.emitBurst(x, y, color, count), api.shake(intensity, duration),
-  api.addScore(n), api.addLives(n), api.setGravity(g), api.setBg(hex), api.playSound("jump"|"coin"|"laser"|"dash"|"explosion"|"powerup"|"hit"|"victory"|"bounce"), api.synthSound({ wave, freq, endFreq, duration, volume }), api.win(), api.lose(), api.restart().
-Devuelve SIEMPRE JSON válido con { "scripts": [{ "id": "...", "event": "onStart"|"onUpdate"|"onCollide"|"onKeyDown"|"onTimer"|"onWin"|"onLose", "blocks": [], "compiledJs": "window.AsternalRuntime.registerHook({...});" }], "customRuntimeJs": "window.AsternalRuntime.registerHook({...});" }.`;
 
 export async function generateScriptManualWithOrion(input: unknown): Promise<{ text: string; model: string }> {
   const source = input && typeof input === "object" ? (input as { prompt?: unknown; systemPrompt?: unknown }) : {};
   const prompt = cleanText(source.prompt, 48_000);
-  const systemPrompt = cleanText(source.systemPrompt, 24_000) || HTML5_SCRIPT_COMPILER_SYSTEM_PROMPT;
+  const systemPrompt = cleanText(source.systemPrompt, 24_000);
   if (!prompt.trim()) {
-    throw new Error("Escribe una instrucción para generar el script HTML5.");
+    throw new Error("Escribe una instrucción para la IA.");
   }
   const model = await getOrionModel();
   const messages: LLMMessage[] = [
-    { role: "system" as const, content: systemPrompt },
+    ...(systemPrompt.trim() ? [{ role: "system" as const, content: systemPrompt }] : []),
     { role: "user" as const, content: prompt },
   ];
-  try {
-    const text = await askOrion(messages, {
-      temperature: 0.2,
-      responseMimeType: "application/json",
-    });
-    return { text, model };
-  } catch {
-    const userInstruction = extractUserInstructionFromScriptPrompt(prompt);
-    const compiled = compileUserLanguageLocally(userInstruction, DEFAULT_USER_LANGUAGE);
-    const scripts = compiled.compiledScripts.length > 0
-      ? compiled.compiledScripts
-      : synthesizeScriptsFromRequest(userInstruction);
-    return {
-      text: JSON.stringify({
-        scripts,
-        customRuntimeJs: compiled.compiledJs,
-      }),
-      model: "gemini-3-flash-preview",
-    };
-  }
+  const text = await askOrion(messages, {
+    temperature: 0.2,
+    responseMimeType: "application/json",
+  });
+  return { text, model };
 }
 
 

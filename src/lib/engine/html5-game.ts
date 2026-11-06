@@ -2,7 +2,6 @@ import type { CustomRuntimeConfig, CustomSoundSynth, Entity, Project, Scene, Spr
 import { DEFAULT_LAYER_ID, MAIN_GOAL_PRESET, ensureSceneLayers, isMainGoalEntity, uid } from "./core";
 import { shadeColor } from "./character";
 import { loadCustomSounds, type CustomSound } from "./sfx";
-import { isLegacyPlaceholderScriptJs, sanitizeOrUpgradeHtml5ScriptJs } from "../ai/custom-language";
 
 export interface Html5GameOptions {
   /** Escena inicial que se va a ejecutar. */
@@ -147,66 +146,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
 
   const safeTitle = escapeHtmlText(title);
   const customCss = (customRuntime?.cssCode ?? "").trim();
-  const collectedEntityJsChunks: string[] = [];
-  const independentScriptTags: string[] = [];
-  if (customRuntime?.jsCode?.trim()) {
-    const cleanRuntimeJs = sanitizeOrUpgradeHtml5ScriptJs(
-      customRuntime.jsCode
-        .replace(/\/\/ \[BEGIN_USER_LANG_PROGRAM:[^\]]+\][\s\S]*?\/\/ \[END_USER_LANG_PROGRAM:[^\]]+\]\n?/g, "")
-        .trim(),
-    );
-    if (cleanRuntimeJs) {
-      collectedEntityJsChunks.push(cleanRuntimeJs);
-    }
-  }
-  for (const sc of allScenes) {
-    for (const ent of sc.entities ?? []) {
-      for (const s of ent.scripts ?? []) {
-        if ((s.compiledJs && s.compiledJs.trim()) || (s.customLanguageCode && s.customLanguageCode.trim())) {
-          const snippet = sanitizeOrUpgradeHtml5ScriptJs(
-            s.compiledJs,
-            s.customLanguageCode,
-            ent.id,
-            ent.kind,
-          ).trim();
-          if (snippet && !collectedEntityJsChunks.some((c) => c.includes(snippet))) {
-            collectedEntityJsChunks.push(snippet);
-            const safeSnippet = snippet.replace(/<\/script/gi, "<\\/script");
-            try {
-              new Function(safeSnippet);
-              independentScriptTags.push(
-                `<script id="asternal-script-${escapeHtmlText(s.id)}" data-asternal-script-id="${escapeHtmlText(s.id)}" data-entity-id="${escapeHtmlText(ent.id)}">\n${safeSnippet}\n</script>`,
-              );
-            } catch {
-              // Ignorar si tiene error de sintaxis
-            }
-          }
-        }
-      }
-    }
-    for (const uiEl of sc.ui ?? []) {
-      for (const s of uiEl.scripts ?? []) {
-        if (s.compiledJs && s.compiledJs.trim()) {
-          const snippet = sanitizeOrUpgradeHtml5ScriptJs(s.compiledJs, s.customLanguageCode).trim();
-          if (snippet && !collectedEntityJsChunks.some((c) => c.includes(snippet))) {
-            collectedEntityJsChunks.push(snippet);
-          }
-        }
-      }
-    }
-  }
-  const rawCustomJs = collectedEntityJsChunks.join("\n\n").trim() || DEFAULT_CUSTOM_RUNTIME_COMMENT;
-  const sanitizedCustomJs = rawCustomJs.replace(/<\/script/gi, "<\\/script");
-  let customJsIsSyntacticallyValid = true;
-  try {
-    new Function(sanitizedCustomJs);
-  } catch {
-    customJsIsSyntacticallyValid = false;
-  }
-  const customJs = customJsIsSyntacticallyValid
-    ? sanitizedCustomJs
-    : `/* Error de sintaxis en script personalizado omitido */\n// ${sanitizedCustomJs.replace(/\r?\n/g, "\n// ")}`;
-  const extraIndependentScriptsHtml = independentScriptTags.length > 0 ? `\n${independentScriptTags.join("\n")}` : "";
+  const customJs = (customRuntime?.jsCode ?? "").trim() || DEFAULT_CUSTOM_RUNTIME_COMMENT;
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -220,7 +160,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background: #0b1e3f;
+    background: #020617;
     color: #f8fafc;
     font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     user-select: none;
@@ -233,6 +173,9 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     height: 100%;
     overflow: hidden;
     margin: 0 auto;
+    contain: strict;
+    transform: translateZ(0);
+    backface-visibility: hidden;
   }
   #game-root.camera-vertical {
     max-width: min(100%, calc(100dvh * 9 / 16));
@@ -245,6 +188,9 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     width: 100%;
     height: 100%;
     touch-action: none;
+    will-change: contents, transform;
+    transform: translateZ(0);
+    backface-visibility: hidden;
     image-rendering: auto;
   }
   .top-bar {
@@ -440,11 +386,11 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
   <canvas id="game-canvas"></canvas>
 
   <div class="top-bar">
-    <div id="fps-badge" class="badge-fps" style="display:${showFPS !== false ? "block" : "none"}">60 FPS</div>
-    <button id="btn-stop" type="button" class="btn-stop" style="display:${embedded !== false ? "block" : "none"}">STOP</button>
+    <div id="fps-badge" class="badge-fps" style="display:none">60 FPS</div>
+    <button id="btn-stop" type="button" class="btn-stop" style="display:none">STOP</button>
   </div>
 
-  <div id="touch-bar" class="touch-bar" style="display:${touchControls !== false ? "flex" : "none"}">
+  <div id="touch-bar" class="touch-bar" style="display:none">
     <div class="touch-group">
       <button id="touch-left" type="button" class="touch-btn">◀</button>
       <button id="touch-right" type="button" class="touch-btn">▶</button>
@@ -693,7 +639,6 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
   // --- Runtime Extension & Hook Registry (Editable in HTML5) ---
   var runtimeHooksList = [];
   var customBlockHandlers = {};
-  var runtimeReady = false;
   var runtimePhysics = {
     baseSpeed: 220,
     jumpForce: 520,
@@ -718,27 +663,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
       if (!normalized.onRender && typeof normalized.onDraw === "function") normalized.onRender = normalized.onDraw;
       if (!normalized.onKeyDown && typeof normalized.onKey === "function") normalized.onKeyDown = normalized.onKey;
       if (!normalized.onInit && typeof normalized.onStart === "function") normalized.onInit = normalized.onStart;
-      var replacedExisting = false;
-      if (normalized.id) {
-        var existingHookIdx = -1;
-        for (var hi = 0; hi < runtimeHooksList.length; hi++) {
-          if (runtimeHooksList[hi] && runtimeHooksList[hi].id === normalized.id) {
-            existingHookIdx = hi;
-            break;
-          }
-        }
-        if (existingHookIdx >= 0) {
-          runtimeHooksList[existingHookIdx] = normalized;
-          replacedExisting = true;
-        } else {
-          runtimeHooksList.push(normalized);
-        }
-      } else {
-        runtimeHooksList.push(normalized);
-      }
-      if (runtimeReady && !replacedExisting && typeof normalized.onInit === "function" && window.AsternalRuntime.api) {
-        try { normalized.onInit(window.AsternalRuntime.api); } catch (err) {}
-      }
+      runtimeHooksList.push(normalized);
       if (normalized.customBlocks && typeof normalized.customBlocks === "object") {
         Object.keys(normalized.customBlocks).forEach(function(k) {
           customBlockHandlers[k] = normalized.customBlocks[k];
@@ -1045,27 +970,8 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     var BASE_SPEED = runtimePhysics.baseSpeed || 220;
     var JUMP = runtimePhysics.jumpForce || 520;
 
-    for (var i0 = scene.entities.length - 1; i0 >= 0; i0--) {
+    for (var i0 = 0; i0 < scene.entities.length; i0++) {
       var e0 = scene.entities[i0];
-      if (!Number.isFinite(e0.w) || e0.w <= 0) {
-        e0.w = typeof e0.width === "number" && Number.isFinite(e0.width) && e0.width > 0 ? e0.width : 32;
-      }
-      if (!Number.isFinite(e0.h) || e0.h <= 0) {
-        e0.h = typeof e0.height === "number" && Number.isFinite(e0.height) && e0.height > 0 ? e0.height : 32;
-      }
-      e0.width = e0.w;
-      e0.height = e0.h;
-      if (!Number.isFinite(e0.x)) e0.x = e0._px !== undefined && Number.isFinite(e0._px) ? e0._px : 100;
-      if (!Number.isFinite(e0.y)) e0.y = e0._py !== undefined && Number.isFinite(e0._py) ? e0._py : 100;
-      if (!Number.isFinite(e0.vx)) e0.vx = 0;
-      if (!Number.isFinite(e0.vy)) e0.vy = 0;
-      if (typeof e0.life === "number") {
-        e0.life -= dt;
-        if (e0.life <= 0) { scene.entities.splice(i0, 1); markDrawListDirty(); continue; }
-      } else if (typeof e0.lifetime === "number") {
-        e0.lifetime -= dt;
-        if (e0.lifetime <= 0) { scene.entities.splice(i0, 1); markDrawListDirty(); continue; }
-      }
       if (e0._px === undefined) { e0._px = e0.x; e0._py = e0.y; }
     }
 
@@ -1274,10 +1180,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     for (var ig = 0; ig < scene.entities.length; ig++) {
       var eg = scene.entities[ig];
       if (eg.kind === "platform") continue;
-      var isG = grounded.has(eg.id);
-      eg._grounded = isG;
-      eg.grounded = isG;
-      eg.onGround = isG;
+      eg._grounded = grounded.has(eg.id);
       eg._floor = groundedOn.get(eg.id);
     }
 
@@ -2012,7 +1915,6 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
         };
         for (var i = 0; i < scripts.length; i++) {
           var s = scripts[i];
-          if (s.compiledJs && String(s.compiledJs).trim().length > 0) continue;
           var key = element.id + "|" + s.id;
           if (uiSuspended.has(key)) continue;
           (function(k) {
@@ -2038,7 +1940,6 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
         }
 
         function run(script, self, other) {
-          if (script.compiledJs && String(script.compiledJs).trim().length > 0) return;
           var key = keyFor(script, self);
           if (suspended.has(key)) return;
           var ctx = {
@@ -2614,7 +2515,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
 
   // --- Runtime Loop & State ---
   var canvas = document.getElementById("game-canvas");
-  var ctx = canvas.getContext("2d");
+  var ctx = canvas.getContext("2d", { alpha: false, desynchronized: true }) || canvas.getContext("2d");
 
   var activeSceneId = PAYLOAD.initialSceneId || (SCENES[0] && SCENES[0].id);
   function findInitialScene(id) {
@@ -3083,7 +2984,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     var viewH = isVerticalCam ? (H / scale) : VIEW_H;
     var player = null;
     for (var pi = 0; pi < work.entities.length; pi++) {
-      if (work.entities[pi].controllable && work.entities[pi].x > -9000) { player = work.entities[pi]; break; }
+      if (work.entities[pi].controllable) { player = work.entities[pi]; break; }
     }
     var camX = state.cameraX;
     var camY = 0;
@@ -3095,14 +2996,7 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
       if (work.height > viewH) camY = Math.max(0, Math.min(work.height - viewH, camY));
       else camY = (work.height - viewH) / 2;
       state.cameraX = camX;
-    } else {
-      if (work.width <= viewW) camX = (work.width - viewW) / 2;
-      if (work.height > viewH) camY = Math.max(0, Math.min(work.height - viewH, (work.height - viewH) / 2));
-      else camY = (work.height - viewH) / 2;
     }
-    runtimeApi.camera.x = camX;
-    runtimeApi.camera.y = camY;
-    runtimeApi.camera.scale = scale;
 
     var sx = shake.time > 0 ? (Math.random() - 0.5) * shake.intensity : 0;
     var sy = shake.time > 0 ? (Math.random() - 0.5) * shake.intensity : 0;
@@ -3280,58 +3174,20 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     }
   }
 
-  var pressedKeys = {};
   var runtimeApi = {
-    canvas: canvas,
-    ctx: ctx,
-    keys: pressedKeys,
-    get scene() { return work; },
-    get state() { return state; },
-    get input() { input.keys = pressedKeys; return input; },
-    camera: { x: 0, y: 0, scale: 1 },
     getScene: function() { return work; },
     getState: function() { return state; },
-    getInput: function() { input.keys = pressedKeys; return input; },
+    getInput: function() { return input; },
     getPlayer: function() { return findFirstOfKind(work, "player"); },
-    getScore: function() { return state.score; },
-    getLives: function() { return state.lives; },
     getEntities: function(kind) {
       if (!kind) return work.entities.filter(function(e) { return e.x > -9000; });
       return work.entities.filter(function(e) { return e.kind === kind && e.x > -9000; });
     },
-    spawnEntity: function(kindOrPreset, xOrOverrides, yOpt, overridesOpt) {
-      var extraOverrides = typeof xOrOverrides === "number"
-        ? Object.assign({}, overridesOpt || {}, { x: xOrOverrides }, typeof yOpt === "number" ? { y: yOpt } : {})
-        : Object.assign({}, xOrOverrides || {});
-      if (typeof kindOrPreset === "string" && (kindOrPreset === "particle" || kindOrPreset === "spark" || kindOrPreset === "fire" || kindOrPreset === "smoke")) {
-        var px = typeof extraOverrides.x === "number" && Number.isFinite(extraOverrides.x) ? extraOverrides.x : 100;
-        var py = typeof extraOverrides.y === "number" && Number.isFinite(extraOverrides.y) ? extraOverrides.y : 100;
-        var pvx = typeof extraOverrides.vx === "number" && Number.isFinite(extraOverrides.vx) ? extraOverrides.vx : (Math.random() - 0.5) * 120;
-        var pvy = typeof extraOverrides.vy === "number" && Number.isFinite(extraOverrides.vy) ? extraOverrides.vy : -40 - Math.random() * 80;
-        var plife = typeof extraOverrides.life === "number" && extraOverrides.life > 0 ? extraOverrides.life : 0.45;
-        var psize = typeof extraOverrides.size === "number" && extraOverrides.size > 0 ? extraOverrides.size : (typeof extraOverrides.w === "number" ? extraOverrides.w : 4);
-        var pcolor = typeof extraOverrides.color === "string" ? extraOverrides.color : "#38bdf8";
-        pushParticle({
-          x: px,
-          y: py,
-          vx: pvx,
-          vy: pvy,
-          life: plife,
-          max: plife,
-          color: pcolor,
-          size: psize,
-          gravity: extraOverrides.gravity === false ? 0 : 300
-        });
-        return null;
-      }
+    spawnEntity: function(kindOrPreset, overrides) {
       var base = typeof kindOrPreset === "string"
         ? (KIND_PRESETS[kindOrPreset] || KIND_PRESETS.coin)
         : kindOrPreset;
-      var ent = Object.assign({}, cloneDeep(base), { id: uid(), x: 100, y: 100, grounded: false, onGround: false }, extraOverrides);
-      if (typeof extraOverrides.width === "number" && extraOverrides.w === undefined) ent.w = extraOverrides.width;
-      if (typeof extraOverrides.height === "number" && extraOverrides.h === undefined) ent.h = extraOverrides.height;
-      ent.width = ent.w;
-      ent.height = ent.h;
+      var ent = Object.assign({}, cloneDeep(base), { id: uid(), x: 100, y: 100 }, overrides || {});
       work.entities.push(ent);
       markDrawListDirty();
       return ent;
@@ -3370,8 +3226,6 @@ export function buildStandaloneGameHtml(options: Html5GameOptions): string {
     audio: window.AsternalAudio
   };
   window.AsternalRuntime.api = runtimeApi;
-  window.AsternalRuntime.canvas = canvas;
-  window.AsternalRuntime.ctx = ctx;
 
   try {
   /* __ASTERNAL_CUSTOM_RUNTIME_START__ */
@@ -3398,7 +3252,6 @@ ${customJs}
       try { runtimeHooksList[initIdx].onInit(runtimeApi); } catch (err) { console.error("[onInit]", err); }
     }
   }
-  runtimeReady = true;
 
   // --- Parent Bridge & Visibility ---
   var paused = false;
@@ -3496,11 +3349,11 @@ ${customJs}
         var stepDt = Math.min(remaining, stepCap);
         if (!state.win && !state.dead) {
           stepScene(work, input, state, stepDt, onGoalReached);
-        }
-        scripts.step(work, state, input, hooks, stepDt);
-        for (var ti = 0; ti < runtimeHooksList.length; ti++) {
-          if (typeof runtimeHooksList[ti].onTick === "function") {
-            try { runtimeHooksList[ti].onTick(runtimeApi, stepDt); } catch (err) {}
+          scripts.step(work, state, input, hooks, stepDt);
+          for (var ti = 0; ti < runtimeHooksList.length; ti++) {
+            if (typeof runtimeHooksList[ti].onTick === "function") {
+              try { runtimeHooksList[ti].onTick(runtimeApi, stepDt); } catch (err) {}
+            }
           }
         }
         if (shake.time > 0) shake.time = Math.max(0, shake.time - stepDt);
@@ -3548,7 +3401,7 @@ ${customJs}
     if (!paused) tickFrame(performance.now(), true);
   }, 4);
 })();
-</script>${extraIndependentScriptsHtml}
+</script>
 </body>
 </html>`;
 }
@@ -3842,34 +3695,11 @@ export function syncRuntimeAndTexturesToProject(
   const cleanedScenes = (project.scenes ?? []).map((sc) => {
     let entChanged = false;
     const nextEntities = (sc.entities ?? []).map((ent) => {
-      let nextEnt = ent;
-      if (nextEnt.texture && isLegacyGeneratedPlaceholderSvg(nextEnt.texture)) {
+      if (ent.texture && isLegacyGeneratedPlaceholderSvg(ent.texture)) {
         entChanged = true;
-        nextEnt = { ...nextEnt, texture: null };
+        return { ...ent, texture: null };
       }
-      if (Array.isArray(nextEnt.scripts) && nextEnt.scripts.length > 0) {
-        let scriptsUpdated = false;
-        const upgradedScripts = nextEnt.scripts.map((scr) => {
-          if (scr.compiledJs && isLegacyPlaceholderScriptJs(scr.compiledJs, scr.customLanguageCode)) {
-            scriptsUpdated = true;
-            return {
-              ...scr,
-              compiledJs: sanitizeOrUpgradeHtml5ScriptJs(
-                scr.compiledJs,
-                scr.customLanguageCode,
-                nextEnt.id,
-                nextEnt.kind,
-              ),
-            };
-          }
-          return scr;
-        });
-        if (scriptsUpdated) {
-          entChanged = true;
-          nextEnt = { ...nextEnt, scripts: upgradedScripts };
-        }
-      }
-      return nextEnt;
+      return ent;
     });
     if (!nextEntities.some((ent) => isMainGoalEntity(ent))) {
       entChanged = true;
@@ -3965,11 +3795,7 @@ export function syncRuntimeAndTexturesToProject(
   }
 
   // Extrae sonidos registrados con window.AsternalAudio.registerSound("nombre", { ... }) en customRuntime.jsCode
-  const rawJsCode = project.customRuntime?.jsCode ?? "";
-  const jsCode = rawJsCode && isLegacyPlaceholderScriptJs(rawJsCode)
-    ? sanitizeOrUpgradeHtml5ScriptJs(rawJsCode)
-    : rawJsCode;
-  const jsCodeChanged = jsCode !== rawJsCode;
+  const jsCode = project.customRuntime?.jsCode ?? "";
   const nextSynthSounds: Record<string, CustomSoundSynth> = {
     ...(project.customRuntime?.synthSounds ?? {}),
   };
@@ -4011,7 +3837,7 @@ export function syncRuntimeAndTexturesToProject(
   const spritesChanged = spritesCleaned || existingSprites.length !== rawExistingSprites.length;
   const soundsChanged = Object.keys(nextSynthSounds).length !== Object.keys(project.customRuntime?.synthSounds ?? {}).length;
 
-  if (!scenesChanged && !spritesChanged && !soundsChanged && !jsCodeChanged) return project;
+  if (!scenesChanged && !spritesChanged && !soundsChanged) return project;
 
   return {
     ...project,
@@ -4020,11 +3846,10 @@ export function syncRuntimeAndTexturesToProject(
       ...(project.assets ?? { sprites: [] }),
       sprites: existingSprites,
     },
-    ...(project.customRuntime || soundsChanged || jsCodeChanged
+    ...(project.customRuntime || soundsChanged
       ? {
           customRuntime: {
             ...(project.customRuntime ?? {}),
-            ...(jsCodeChanged ? { jsCode } : {}),
             synthSounds: nextSynthSounds,
           },
         }

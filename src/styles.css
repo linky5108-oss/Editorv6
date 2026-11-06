@@ -50,131 +50,139 @@
   --color-error-ink: var(--error-ink);
   --color-warn-ink: var(--warn-ink);
 
-  --font-display: "Space Grotesk", "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
-  --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+  --font-display: "Space Grotesk", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
+  --font-sans: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
 }
 
 :root {
-  --radius: 0.875rem;
+  --radius: 0.75rem;
 
-  /* ── Lienzo neutro frío y tintas (DESIGN.md §2) ── */
+  /* ── Lienzo "espacio profundo": claro, frío, casi blanco ── */
   --canvas: oklch(0.972 0.006 252);
-  --background: oklch(0.972 0.006 252);
+  --background: var(--canvas);
   --foreground: oklch(0.165 0.028 258);
   --ink: oklch(0.165 0.028 258);
   --ink-2: oklch(0.43 0.028 256);
   --ink-3: oklch(0.55 0.022 256);
 
-  /* ── Superficies elevadas y tarjetas ── */
-  --card: #ffffff;
-  --card-foreground: oklch(0.165 0.028 258);
-  --surface-2: oklch(0.948 0.008 252);
-  --popover: #ffffff;
-  --popover-foreground: oklch(0.165 0.028 258);
+  /* ── Superficies ── */
+  --card: oklch(1 0 0);
+  --card-foreground: var(--ink);
+  --surface-2: oklch(0.95 0.008 252);
+  --popover: oklch(1 0 0);
+  --popover-foreground: var(--ink);
 
-  /* ── Marca Azure Drift (cobalto → azul eléctrico → azur) ── */
-  --primary: oklch(0.52 0.19 258);
-  --primary-foreground: #ffffff;
-  --primary-glow: oklch(0.62 0.17 252);
-  --blue-600: oklch(0.42 0.21 264);
-  --azure: oklch(0.64 0.14 240);
-  --violet-accent: oklch(0.56 0.2 286);
-  --cyan-accent: oklch(0.62 0.13 210);
-  --accent: oklch(0.94 0.022 254);
-  --accent-foreground: oklch(0.42 0.18 260);
+  /* ── Azul Asternal «Azure Drift»: cobalto → azur → cielo (suave, luminoso,
+     profesional). Es la única familia azul de la app: botones, degradados,
+     sombras de color y monogramas usan estos mismos tonos. ── */
+  --primary: oklch(0.55 0.15 262);
+  --primary-foreground: oklch(0.99 0 0);
+  --primary-glow: oklch(0.63 0.12 252);
+  --blue-600: oklch(0.46 0.15 268);
+  --azure: oklch(0.72 0.08 236);
+  --violet-accent: oklch(0.63 0.15 300);
+  --cyan-accent: oklch(0.75 0.07 210);
+  --accent: var(--azure);
+  --accent-foreground: oklch(0.25 0.03 260);
 
-  --secondary: oklch(0.948 0.008 252);
-  --secondary-foreground: oklch(0.22 0.028 258);
+  --secondary: var(--surface-2);
+  --secondary-foreground: oklch(0.27 0.03 256);
 
-  --muted: oklch(0.948 0.008 252);
-  --muted-foreground: oklch(0.46 0.025 256);
+  --muted: var(--surface-2);
+  --muted-foreground: oklch(0.52 0.024 256);
 
-  /* ── Líneas hairline y estados ── */
-  --line: oklch(0.895 0.012 252);
-  --line-strong: oklch(0.82 0.018 252);
+  /* ── Líneas y estados ── */
+  --line: oklch(0.9 0.012 252 / 0.6);
+  --line-strong: oklch(0.83 0.016 252 / 0.75);
   --border: var(--line);
-  --input: oklch(0.88 0.014 252);
-  --ring: oklch(0.55 0.18 258 / 0.35);
-  --grid: oklch(0.2 0.03 258 / 0.06);
-  --destructive: oklch(0.56 0.21 27);
-  --destructive-foreground: #ffffff;
-  --success: oklch(0.58 0.16 156);
-  --warn: oklch(0.68 0.16 70);
+  --input: oklch(0.92 0.008 252 / 0.7);
+  --ring: oklch(0.55 0.13 262 / 0.35);
+  --grid: oklch(0.87 0.01 252 / 0.4);
+  --destructive: oklch(0.577 0.215 25);
+  --destructive-foreground: oklch(0.99 0 0);
+  --success: oklch(0.62 0.17 155);
+  --warn: oklch(0.75 0.16 80);
 
-  /* ── Sombras suaves con tinte frío (DESIGN.md §4) ── */
-  --shadow-xs: 0 1px 2px 0 oklch(0.2 0.03 258 / 0.05);
-  --shadow-sm: 0 2px 6px -1px oklch(0.2 0.03 258 / 0.07), 0 1px 2px -1px oklch(0.2 0.03 258 / 0.04);
-  --shadow-md: 0 6px 16px -4px oklch(0.2 0.04 258 / 0.09), 0 2px 6px -2px oklch(0.2 0.03 258 / 0.05);
-  --shadow-lg: 0 14px 30px -8px oklch(0.2 0.05 258 / 0.12), 0 4px 10px -4px oklch(0.2 0.03 258 / 0.06);
-  --shadow-xl: 0 24px 48px -12px oklch(0.2 0.05 258 / 0.16);
+  /* ── Elevación (jerarquía: borde → sombra) ── */
+  --shadow-xs: 0 1px 2px 0 oklch(0.2 0.02 260 / 0.05);
+  --shadow-sm: 0 1px 3px 0 oklch(0 0 0 / 0.06), 0 1px 2px -1px oklch(0 0 0 / 0.06);
+  --shadow-md: 0 4px 12px -2px oklch(0 0 0 / 0.08), 0 2px 4px -2px oklch(0 0 0 / 0.04);
+  --shadow-lg: 0 12px 28px -8px oklch(0 0 0 / 0.10), 0 4px 12px -4px oklch(0 0 0 / 0.06);
+  --shadow-xl: 0 20px 44px -12px oklch(0 0 0 / 0.14);
 
-  --shadow-float: 0 18px 40px -12px oklch(0.25 0.06 258 / 0.18);
-  --shadow-glow: 0 10px 26px -6px oklch(0.52 0.19 258 / 0.38);
+/* Sombras de color (elementos flotando sobre el lienzo blanco) */
+  --shadow-float: 0 18px 44px -18px oklch(0.5 0.13 266 / 0.3);
+  --shadow-glow: 0 10px 30px -12px oklch(0.55 0.14 262 / 0.3), 0 4px 18px -8px oklch(0.68 0.08 230 / 0.26);
 
-  /* ── El único degradado de marca (135° cobalto → azur) ── */
-  --gradient-asternal: linear-gradient(135deg, var(--blue-600) 0%, var(--primary) 48%, var(--azure) 100%);
-  --gradient-asternal-soft: linear-gradient(135deg, oklch(0.52 0.19 258 / 0.10) 0%, oklch(0.64 0.14 240 / 0.08) 100%);
-  --gradient-asternal-deep: linear-gradient(135deg, oklch(0.26 0.09 264) 0%, oklch(0.42 0.21 264) 55%, oklch(0.52 0.19 258) 100%);
+  /* Los tokens de material (--glass-*) y de elevación los define glass.css:
+     la interfaz es siempre Material 3, sin vidrio ni variantes. */
+
+  /* ── Degradados oficiales (DESIGN.md §2.2) ── */
+  /* ÚNICO degradado de marca: 135° cobalto → azur → cielo (Azure Drift). */
+  --gradient-asternal: linear-gradient(135deg, oklch(0.52 0.15 266) 0%, oklch(0.61 0.12 254) 48%, oklch(0.74 0.08 234) 100%);
+  /* Variantes del MISMO degradado: diluido (acentos de fondo) y suave-profundo (banner destacado). */
+  --gradient-asternal-soft: linear-gradient(135deg, oklch(0.52 0.15 266 / 0.1), oklch(0.61 0.12 254 / 0.08) 48%, oklch(0.74 0.08 234 / 0.06));
+  --gradient-asternal-deep: linear-gradient(135deg, oklch(0.42 0.12 266) 0%, oklch(0.48 0.11 256) 48%, oklch(0.57 0.08 236) 100%);
+
+  /* Asternal Plus — paleta Material 3 del producto (roles y tonos sólidos) en
+     glass.css: --plus, --plus-container, --plus-on-primary, --plus-outline
+     y --plus-frame-*. Aquí no se define ningún degradado de Plus. */
 
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-out-smooth: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+
 .dark {
-  --radius: 0.875rem;
-
-  --canvas: oklch(0.145 0.022 258);
-  --background: oklch(0.145 0.022 258);
-  --foreground: oklch(0.96 0.008 252);
-  --ink: oklch(0.96 0.008 252);
-  --ink-2: oklch(0.76 0.018 254);
-  --ink-3: oklch(0.58 0.02 256);
-
-  --card: oklch(0.19 0.025 258);
-  --card-foreground: oklch(0.96 0.008 252);
-  --surface-2: oklch(0.225 0.026 258);
-  --popover: oklch(0.20 0.026 258);
-  --popover-foreground: oklch(0.96 0.008 252);
-
-  --primary: oklch(0.64 0.18 254);
-  --primary-foreground: #ffffff;
-  --primary-glow: oklch(0.74 0.15 244);
-  --blue-600: oklch(0.54 0.2 260);
-  --azure: oklch(0.72 0.14 236);
-  --violet-accent: oklch(0.68 0.18 286);
-  --cyan-accent: oklch(0.72 0.13 206);
-  --accent: oklch(0.27 0.045 258);
-  --accent-foreground: oklch(0.86 0.09 246);
-
-  --secondary: oklch(0.23 0.026 258);
-  --secondary-foreground: oklch(0.94 0.01 252);
-
-  --muted: oklch(0.23 0.025 258);
-  --muted-foreground: oklch(0.70 0.02 254);
-
-  --line: oklch(0.30 0.025 258);
-  --line-strong: oklch(0.40 0.03 258);
+  /* Tema oscuro real de Asternal (antes este bloque replicaba :root, así que
+     "oscuro" era indistinguible del claro). Misma paleta en tonos oscuros:
+     lienzo azul profundo, superficies elevadas y el azul de marca aclarado
+     para conservar el contraste AA sobre fondo oscuro. */
+  --radius: 0.75rem;
+  --canvas: oklch(0.155 0.022 262);
+  --background: var(--canvas);
+  --foreground: oklch(0.95 0.01 262);
+  --ink: oklch(0.95 0.01 262);
+  --ink-2: oklch(0.78 0.02 260);
+  --ink-3: oklch(0.64 0.02 260);
+  --card: oklch(0.215 0.024 262);
+  --card-foreground: var(--ink);
+  --surface-2: oklch(0.27 0.026 262);
+  --popover: oklch(0.235 0.024 262);
+  --popover-foreground: var(--ink);
+  --primary: oklch(0.72 0.13 260);
+  --primary-foreground: oklch(0.16 0.04 262);
+  --primary-glow: oklch(0.78 0.1 255);
+  --blue-600: oklch(0.62 0.14 266);
+  --azure: oklch(0.78 0.08 236);
+  --violet-accent: oklch(0.72 0.14 300);
+  --cyan-accent: oklch(0.82 0.07 210);
+  --accent: var(--azure);
+  --accent-foreground: oklch(0.17 0.03 260);
+  --secondary: var(--surface-2);
+  --secondary-foreground: oklch(0.9 0.01 262);
+  --muted: var(--surface-2);
+  --muted-foreground: oklch(0.74 0.02 260);
+  --line: oklch(0.34 0.025 262 / 0.85);
+  --line-strong: oklch(0.45 0.03 262 / 0.9);
   --border: var(--line);
-  --input: oklch(0.32 0.028 258);
-  --ring: oklch(0.64 0.18 254 / 0.45);
-  --grid: oklch(0.95 0.01 252 / 0.06);
-
-  --destructive: oklch(0.62 0.2 25);
-  --destructive-foreground: #ffffff;
-  --success: oklch(0.68 0.16 156);
-  --warn: oklch(0.76 0.15 75);
-
-  --gradient-asternal: linear-gradient(135deg, oklch(0.50 0.2 262) 0%, oklch(0.62 0.18 254) 50%, oklch(0.72 0.14 236) 100%);
-  --gradient-asternal-soft: linear-gradient(135deg, oklch(0.62 0.18 254 / 0.16) 0%, oklch(0.72 0.14 236 / 0.10) 100%);
-  --gradient-asternal-deep: linear-gradient(135deg, oklch(0.22 0.06 262) 0%, oklch(0.42 0.18 260) 100%);
-
-  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.35);
-  --shadow-sm: 0 2px 8px -2px rgba(0, 0, 0, 0.45);
-  --shadow-md: 0 8px 20px -4px rgba(0, 0, 0, 0.52);
-  --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.6);
-  --shadow-float: 0 20px 44px -10px rgba(0, 0, 0, 0.68);
-  --shadow-glow: 0 10px 28px -6px oklch(0.62 0.18 254 / 0.42);
+  --input: oklch(0.42 0.03 262 / 0.85);
+  --ring: oklch(0.72 0.13 260 / 0.55);
+  --grid: oklch(0.3 0.025 262 / 0.55);
+  --destructive: oklch(0.68 0.19 25);
+  --destructive-foreground: oklch(0.99 0 0);
+  --success: oklch(0.75 0.15 155);
+  --warn: oklch(0.82 0.14 80);
+  --gradient-asternal: linear-gradient(135deg, oklch(0.62 0.14 266) 0%, oklch(0.7 0.11 254) 48%, oklch(0.82 0.08 234) 100%);
+  --gradient-asternal-soft: linear-gradient(135deg, oklch(0.62 0.14 266 / 0.16), oklch(0.7 0.11 254 / 0.12) 48%, oklch(0.82 0.08 234 / 0.08));
+  --gradient-asternal-deep: linear-gradient(135deg, oklch(0.3 0.1 266) 0%, oklch(0.36 0.09 256) 48%, oklch(0.45 0.07 236) 100%);
+  --shadow-xs: 0 1px 2px 0 oklch(0 0 0 / 0.4);
+  --shadow-sm: 0 1px 3px 0 oklch(0 0 0 / 0.5), 0 1px 2px -1px oklch(0 0 0 / 0.5);
+  --shadow-md: 0 4px 12px -2px oklch(0 0 0 / 0.55), 0 2px 4px -2px oklch(0 0 0 / 0.4);
+  --shadow-lg: 0 12px 28px -8px oklch(0 0 0 / 0.6), 0 4px 12px -4px oklch(0 0 0 / 0.45);
+  --shadow-float: 0 18px 44px -18px oklch(0.4 0.14 266 / 0.55);
+  --shadow-glow: 0 10px 30px -12px oklch(0.55 0.14 262 / 0.45), 0 4px 18px -8px oklch(0.68 0.08 230 / 0.3);
 }
 
 @layer base {

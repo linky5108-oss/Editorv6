@@ -17,14 +17,6 @@ import {
 } from "@/lib/engine/html5-game";
 import { getProjectAudioLibrary } from "@/lib/engine/audio-library";
 import { normalizeScripts, type Script } from "@/lib/engine/scripts";
-import {
-  buildUserLanguagePromptContext,
-  compileUserLanguageLocally,
-  loadUserLanguage,
-  mergeCompiledProgramsIntoRuntimeJs,
-  saveUserLanguageToStorage,
-  type CustomLanguageProgram,
-} from "./custom-language";
 import { ENGINE_KNOWLEDGE } from "./engine-knowledge";
 import { geminiChat, parseAiJson } from "./gemini-provider";
 
@@ -223,11 +215,10 @@ export function buildOrionArchitectPrompt(
   project: Project,
   recentHistoryText?: string,
 ): string {
-  const userLang = loadUserLanguage(project);
   return [
-    "Eres Orión (SIEMPRE escrito con tilde: Orión), el asistente y traductor de lenguaje de programación mediante inteligencia artificial de Asternal.",
-    "Tu misión es MODIFICAR REALMENTE el juego y TRADUCIR el lenguaje de programación inventado por el usuario en código JavaScript/HTML5 funcional y bloques del motor. Puedes modificar escenas, colores, gravedad, entidades (jugador, plataformas, enemigos, monedas, meta, decoración), scripts de bloques, interfaz UI, sonidos sintetizados WebAudio y programar cualquier mecánica nueva en JavaScript dentro del runtime HTML5 (`window.AsternalRuntime.registerHook` y `window.AsternalAudio`).",
-    "REGLAS ESTRICTAS DE EDICIÓN Y TRADUCCIÓN DE LENGUAJE PROPIO:",
+    "Eres Orión (SIEMPRE escrito con tilde: Orión), el asistente de inteligencia artificial oficial de Asternal.",
+    "Tu misión es MODIFICAR REALMENTE el juego cumpliendo exactamente la petición del creador. Puedes modificar escenas, colores, gravedad, entidades (jugador, plataformas, enemigos, monedas, meta, decoración), scripts de bloques, interfaz UI, sonidos sintetizados WebAudio y programar cualquier mecánica nueva en JavaScript dentro del runtime HTML5 (`window.AsternalRuntime.registerHook` y `window.AsternalAudio`).",
+    "REGLAS ESTRICTAS DE EDICIÓN:",
     "1. NUNCA respondas solo con texto: SIEMPRE debes incluir los cambios reales en los campos JSON (`scenePatch`, `entitiesToAdd`, `entityUpdates`, `entityIdsToRemove`, `kindsToRemove`, `replaceAllEntities`, `uiToAdd`, `redistributeLayout`, `synthSounds` o `customRuntimeJs`) para que el juego cambie de verdad.",
     "2. En la escena activa, y=0 es la parte superior y y=height (normalmente 700) es el fondo. El suelo suele estar en y=500..640.",
     "3. Para cambiar tamaño, color, posición, velocidad o propiedades de objetos existentes (como el jugador, plataformas, enemigos o monedas), usa `entityUpdates`: [{ \"targetKind\": \"player\", \"patch\": { \"w\": 64, \"h\": 84, \"color\": \"#ef4444\" } }] o indica el `id` exacto del objeto.",
@@ -235,18 +226,16 @@ export function buildOrionArchitectPrompt(
     "5. Si el usuario pide crear un nivel nuevo desde cero o rehacer todo el mapa, pon `\"replaceAllEntities\": true` y define en `entitiesToAdd` el jugador (`kind: \"player\"`), las plataformas de suelo y aéreas (`kind: \"platform\"`), enemigos (`kind: \"enemy\"`), monedas (`kind: \"coin\"`) y la meta (`kind: \"goal\"`).",
     "6. CONEXIÓN OBLIGATORIA CON EL EDITOR NORMAL Y RESPETO A LOS ASSETS PREDETERMINADOS DEL MOTOR: TODO lo que agregues o modifiques DEBE quedar conectado con el editor normal para que el usuario pueda seguir editándolo visualmente. Las entidades nuevas o editadas deben ir en `entitiesToAdd` o `entityUpdates` usando los assets predeterminados del motor (`KIND_PRESETS` con `texture: null` por defecto para que el editor y el runtime muestren exactamente los mismos gráficos predeterminados del motor, salvo que el usuario pida expresamente dibujar o cambiar una textura personalizada, en cuyo caso usa `texture` y `spritesToAdd`). No inventes botones duplicados de control táctil (`ui_btn_left`, `ui_btn_right`, `ui_btn_jump`, `ui_btn_restart`) en `uiToAdd` porque el motor ya incluye sus controles táctiles predeterminados (`touchControls: true`); usa `uiToAdd`/`uiUpdates` solo cuando el usuario pida elementos de interfaz personalizados, y los sonidos en `synthSounds`.",
     "7. Para nuevas mecánicas de juego, controles por teclado, proyectiles, poderes, física personalizada, lluvia/estrellas en canvas o lógica avanzada, escribe código JavaScript válido y completo en `customRuntimeJs` usando `window.AsternalRuntime.registerHook({ onInit(api), onTick(api, dt), onCollide(a, b, api), onRender(ctx, api), onRenderBackground(ctx, api, W, H), onRenderOverlay(ctx, api, W, H), onKeyDown(code, key, api), onKeyUp(code, key, api) })`, operando sobre las entidades reales de la escena para que sigan siendo editables en el editor normal.",
-    "8. TRADUCTOR DE LENGUAJE PROPIO DEL USUARIO: Cuando el usuario escriba instrucciones en su propio lenguaje inventado (por ejemplo: `SI el jugador pierde:\\nMOSTRAR sonido en el mapa`), comprende su intención usando el diccionario y las reglas de su lenguaje, genera el código JavaScript/HTML5 ejecutable en `customRuntimeJs` y añade también los `scriptsToAdd` equivalentes en `entityUpdates` (por ejemplo sobre `targetKind: \"player\"`).",
-    buildUserLanguagePromptContext(userLang, userInstruction),
     "Conocimiento del motor Asternal:",
     ENGINE_KNOWLEDGE,
     "Estado actual del proyecto:",
     summarizeProjectForOrionArchitect(project),
     recentHistoryText ? `Contexto reciente de la conversación:\n${recentHistoryText}` : "",
-    "Instrucción o código actual del creador para Orión:",
+    "Instrucción actual del creador para Orión:",
     userInstruction,
     `Devuelve ÚNICAMENTE un objeto JSON válido (sin texto fuera del JSON y sin bloques markdown):
 {
-  "reply": "Explicación en primera persona como Orión (con tilde) detallando cómo tradujiste su lenguaje/instrucción a código JavaScript/HTML5 y bloques del motor.",
+  "reply": "Explicación en primera persona como Orión (con tilde) detallando los cambios reales aplicados y conectados con el editor.",
   "changesSummary": ["Cambio real 1", "Cambio real 2"],
   "projectTitle": "",
   "scenePatch": {},
@@ -722,404 +711,20 @@ export function applyOrionPatchToProject(project: Project, patch: OrionEditPatch
   return syncRuntimeAndTexturesToProject(updatedProject, patch.spritesToAdd);
 }
 
-const NAMED_COLORS_HEX: Array<{ rx: RegExp; hex: string; label: string }> = [
-  { rx: /\b(rojo|roja|red|carmesi|escarlata)\b/i, hex: "#ef4444", label: "rojo (#ef4444)" },
-  { rx: /\b(verde|green|esmeralda|lima)\b/i, hex: "#22c55e", label: "verde (#22c55e)" },
-  { rx: /\b(azul|blue|celeste|cian|cyan|turquesa)\b/i, hex: "#38bdf8", label: "azul (#38bdf8)" },
-  { rx: /\b(amarillo|amarilla|yellow|dorado|oro|gold)\b/i, hex: "#facc15", label: "amarillo (#facc15)" },
-  { rx: /\b(morado|morada|violeta|purpura|púrpura|purple)\b/i, hex: "#a855f7", label: "morado (#a855f7)" },
-  { rx: /\b(rosa|rosado|pink|magenta|fucsia)\b/i, hex: "#ec4899", label: "rosa (#ec4899)" },
-  { rx: /\b(naranja|anaranjado|orange|ambar|ámbar)\b/i, hex: "#f97316", label: "naranja (#f97316)" },
-  { rx: /\b(blanco|blanca|white|nieve)\b/i, hex: "#f8fafc", label: "blanco (#f8fafc)" },
-  { rx: /\b(negro|negra|black|oscuro|oscura|noche)\b/i, hex: "#0f172a", label: "oscuro (#0f172a)" },
-];
-
-function detectColorFromInstruction(text: string): { hex: string; label: string } | null {
-  const hexMatch = text.match(/#[0-9a-fA-F]{3,6}\b/);
-  if (hexMatch) {
-    return { hex: hexMatch[0], label: hexMatch[0] };
-  }
-  for (const item of NAMED_COLORS_HEX) {
-    if (item.rx.test(text)) return item;
-  }
-  return null;
-}
-
 /**
- * Constructor programático de parches que edita verdaderamente el `Project`
- * (escena, entidades, propiedades físicas, niveles y scripts HTML5 independientes).
+ * Constructor programático de parches para pruebas unitarias y utilidades rápidas del motor.
  */
-export function buildOrionIntelligentPatch(
-  instruction: string,
-  project: Project,
-  targetEntityId?: string | null,
-): OrionEditPatch {
+export function buildOrionIntelligentPatch(instruction: string, project: Project): OrionEditPatch {
   const text = instruction.toLowerCase();
   const scene = project.scenes.find((s) => s.id === project.activeSceneId) ?? project.scenes[0];
-  const sceneW = scene?.width || 1200;
-  const sceneH = scene?.height || 660;
-  const groundY = Math.max(240, sceneH - 120);
-
   const changesSummary: string[] = [];
   const jsSnippets: string[] = [];
   const synthSounds: Record<string, CustomSoundSynth> = {};
   const entitiesToAdd: Array<Partial<Entity> & { kind?: EntityKind }> = [];
-  const entityUpdates: NonNullable<OrionEditPatch["entityUpdates"]> = [];
-  const kindsToRemove: EntityKind[] = [];
-  const scenePatch: NonNullable<OrionEditPatch["scenePatch"]> = {};
+  const entityUpdates: OrionEditPatch["entityUpdates"] = [];
+  const scenePatch: OrionEditPatch["scenePatch"] = {};
   const settingsPatch: Partial<ProjectSettings> = {};
-  let replaceAllEntities = false;
   let redistributeLayout: OrionEditPatch["redistributeLayout"] = null;
-
-  const targetEnt =
-    (targetEntityId && targetEntityId !== "scene"
-      ? scene?.entities.find((e) => e.id === targetEntityId)
-      : null) ?? null;
-
-  const inferredTargetKind: EntityKind = targetEnt
-    ? targetEnt.kind
-    : /\b(jugador|personaje|protagonista|player|h[eé]roe)\b/i.test(text)
-    ? "player"
-    : /\b(enemigo|enemigos|enemy|enemies|jefe|boss|monstruo)\b/i.test(text)
-    ? "enemy"
-    : /\b(plataforma|plataformas|suelo|piso|bloque|pared|muro|trampolin|trampolín)\b/i.test(text)
-    ? "platform"
-    : /\b(moneda|monedas|coin|coins|tesoro|gema|estrella)\b/i.test(text)
-    ? "coin"
-    : /\b(meta|bandera|goal|puerta|salida)\b/i.test(text)
-    ? "goal"
-    : "player";
-
-  // 1. Edición real de propiedades de la Escena (fondo, gravedad, vidas, tiempo)
-  if (/\b(fondo|background|cielo|ambiente|escenario)\b/i.test(text)) {
-    const bgSegment = text.match(/\b(?:fondo|background|cielo|ambiente|escenario)\s+([^,.]+)/i)?.[1] ?? text;
-    const col =
-      !/\b(jugador|enemigo|plataforma|moneda)\b/i.test(bgSegment)
-        ? detectColorFromInstruction(bgSegment)
-        : null;
-    if (/espaci|estrell|nocturn|noche/i.test(bgSegment)) {
-      scenePatch.bg = "#050816";
-      changesSummary.push("Fondo de la escena cambiado a noche espacial (#050816)");
-    } else if (/lava|infierno|fuego|volcan|volcán/i.test(bgSegment)) {
-      scenePatch.bg = "#2a0808";
-      changesSummary.push("Fondo de la escena cambiado a volcán (#2a0808)");
-    } else if (/bosque|selva|naturaleza/i.test(bgSegment)) {
-      scenePatch.bg = "#062c1b";
-      changesSummary.push("Fondo de la escena cambiado a bosque (#062c1b)");
-    } else if (/atardecer|ocaso|tarde/i.test(bgSegment)) {
-      scenePatch.bg = "#3b1d14";
-      changesSummary.push("Fondo de la escena cambiado a atardecer (#3b1d14)");
-    } else if (col) {
-      scenePatch.bg = col.hex;
-      changesSummary.push(`Fondo de la escena actualizado a ${col.label}`);
-    }
-  }
-
-  if (/\b(gravedad|gravity|lunar|ingravidez)\b/i.test(text)) {
-    const gravNum = text.match(/gravedad\s*(?:=|:|a|de)?\s*(-?\d+(?:\.\d+)?)/i);
-    if (gravNum) {
-      scenePatch.gravity = Math.max(-2500, Math.min(3500, Number(gravNum[1])));
-    } else if (/sin\s+gravedad|gravedad\s+cero|ingravidez| flotar/i.test(text)) {
-      scenePatch.gravity = 0;
-    } else if (/lunar|baja|poca|suave|lenta/i.test(text)) {
-      scenePatch.gravity = 460;
-    } else if (/alta|fuerte|pesada|doble|mucha/i.test(text)) {
-      scenePatch.gravity = 2200;
-    } else if (/invertir|inversa|negativa|techo/i.test(text)) {
-      scenePatch.gravity = -900;
-    } else {
-      scenePatch.gravity = 900;
-    }
-    changesSummary.push(`Gravedad de la escena editada a ${scenePatch.gravity}`);
-  }
-
-  const livesMatch =
-    text.match(/(\d+)\s*vidas?\b/i) || text.match(/\bvidas?\s*(?:=|:|a|de)?\s*(\d+)/i);
-  if (livesMatch) {
-    const lives = Math.max(1, Math.min(99, Number(livesMatch[1])));
-    scenePatch.startLives = lives;
-    changesSummary.push(`Vidas iniciales del proyecto editadas a ${lives}`);
-  }
-
-  const timeMatch =
-    text.match(/tiempo(?:\s+l[ií]mite)?\s*(?:=|:|a|de)?\s*(\d+)/i) ||
-    text.match(/(\d+)\s*segundos\s+de\s+tiempo/i);
-  if (timeMatch) {
-    const secs = Math.max(0, Math.min(3600, Number(timeMatch[1])));
-    scenePatch.timeLimit = secs;
-    changesSummary.push(`Tiempo límite de la escena editado a ${secs}s`);
-  }
-
-  // 2. Creación de un nivel nuevo completo o reconstrucción del mapa
-  if (/(crear?\s+(?:un\s+)?nivel|nuevo\s+nivel|rehacer\s+(?:el\s+)?(?:mapa|nivel)|transforma\s+la\s+escena\s+en\s+un\s+nivel)/i.test(text) && scene) {
-    replaceAllEntities = true;
-    const isSpace = /espaci|lunar|estrell|nocturn/i.test(text);
-    const isLava = /lava|fuego|infierno/i.test(text);
-    scenePatch.bg = isSpace ? "#050816" : isLava ? "#2a0808" : scenePatch.bg || "#0b1e3f";
-    if (isSpace && scenePatch.gravity === undefined) scenePatch.gravity = 520;
-
-    entitiesToAdd.push(
-      {
-        kind: "player",
-        name: "Jugador",
-        x: 90,
-        y: groundY - 64,
-        w: 40,
-        h: 56,
-        color: "#38bdf8",
-        controllable: true,
-        gravity: true,
-        solid: true,
-      },
-      {
-        kind: "platform",
-        name: "Suelo Principal",
-        x: 40,
-        y: groundY,
-        w: Math.round(sceneW * 0.42),
-        h: 36,
-        color: isLava ? "#7f1d1d" : "#1e3a8a",
-        solid: true,
-      },
-      {
-        kind: "platform",
-        name: "Plataforma Móvil",
-        x: Math.round(sceneW * 0.48),
-        y: groundY - 90,
-        w: 170,
-        h: 26,
-        color: "#2563eb",
-        solid: true,
-        moving: { axis: "x", range: 130, speed: 85 },
-      },
-      {
-        kind: "platform",
-        name: "Plataforma Superior",
-        x: Math.round(sceneW * 0.68),
-        y: groundY - 165,
-        w: 240,
-        h: 28,
-        color: isLava ? "#991b1b" : "#1d4ed8",
-        solid: true,
-      },
-      {
-        kind: "enemy",
-        name: "Guardián",
-        x: Math.round(sceneW * 0.72),
-        y: groundY - 210,
-        w: 44,
-        h: 44,
-        vx: 85,
-        color: "#f43f5e",
-        hazard: true,
-        patrol: { range: 120, ledgeSafe: true },
-      },
-      {
-        kind: "goal",
-        name: "Meta",
-        x: Math.round(sceneW * 0.84),
-        y: groundY - 230,
-        w: 36,
-        h: 64,
-        color: "#7dd3fc",
-        goal: true,
-      },
-    );
-    for (let i = 0; i < 6; i++) {
-      entitiesToAdd.push({
-        kind: "coin",
-        name: `Moneda ${i + 1}`,
-        x: 180 + i * 135,
-        y: groundY - 120 - (i % 3) * 55,
-        w: 22,
-        h: 22,
-        color: "#fbbf24",
-        collectible: true,
-        value: 10,
-      });
-    }
-    changesSummary.push("Nivel del proyecto reconstruido con nuevas plataformas, monedas, enemigo y meta");
-  }
-
-  // 3. Eliminación de entidades en el proyecto
-  if (/\b(eliminar|elimina|borrar|borra|quitar|quita|remover|sin)\b/i.test(text)) {
-    if (/\b(enemigos?|enemies|jefe|boss|monstruos?)\b/i.test(text)) {
-      kindsToRemove.push("enemy");
-      changesSummary.push("Enemigos eliminados de la escena del proyecto");
-    }
-    if (/\b(monedas?|coins?)\b/i.test(text)) {
-      kindsToRemove.push("coin");
-      changesSummary.push("Monedas eliminadas de la escena del proyecto");
-    }
-    if (/\b(plataformas?|bloques?)\b/i.test(text)) {
-      kindsToRemove.push("platform");
-      changesSummary.push("Plataformas secundarias eliminadas de la escena del proyecto");
-    }
-  }
-
-  // 4. Adición de nuevas entidades al proyecto (monedas, enemigos, plataformas, jefe)
-  const wantsToAdd =
-    /\b(a[ñn]ad[ie]r?|agrega[r]?|crear?|crea|pon(?:er)?|coloca[r]?|spawnea[r]?|genera[r]?|mas|más)\b/i.test(text) ||
-    /\b(monedas?|enemigos?|plataformas?)\s*[:=]\s*\d+/i.test(text);
-
-  if (!replaceAllEntities && scene) {
-    if ((wantsToAdd || /\b(jefe|boss)\b/i.test(text)) && /\b(jefe|boss|enemigo|enemigos|patrulla)\b/i.test(text) && !kindsToRemove.includes("enemy")) {
-      const countMatch = text.match(/(\d+)\s*(?:enemigos?|jefes?)/i) || text.match(/enemigos?\s*[:=]\s*(\d+)/i);
-      const isBoss = /\b(jefe|boss|gigante)\b/i.test(text);
-      const count = countMatch ? Math.max(1, Math.min(12, Number(countMatch[1]))) : 1;
-      for (let i = 0; i < count; i++) {
-        entitiesToAdd.push({
-          kind: "enemy",
-          name: isBoss ? "Jefe" : `Enemigo ${i + 1}`,
-          x: Math.min(sceneW - 140, 380 + i * 150),
-          y: Math.max(100, groundY - (isBoss ? 72 : 44)),
-          w: isBoss ? 68 : 42,
-          h: isBoss ? 68 : 42,
-          vx: isBoss ? 115 : 90,
-          color: "#f43f5e",
-          hazard: true,
-          patrol: { range: 150, ledgeSafe: true },
-        });
-      }
-      changesSummary.push(`${count} ${isBoss ? "jefe(s)" : "enemigo(s)"} añadido(s) al proyecto`);
-    }
-
-    if (wantsToAdd && /\b(moneda|monedas|coin|coins|oros?|estrellas?)\b/i.test(text) && !kindsToRemove.includes("coin")) {
-      const countMatch = text.match(/(\d+)\s*(?:monedas?|coins?)/i) || text.match(/monedas?\s*[:=]\s*(\d+)/i);
-      const count = countMatch ? Math.max(1, Math.min(20, Number(countMatch[1]))) : 5;
-      for (let i = 0; i < count; i++) {
-        entitiesToAdd.push({
-          kind: "coin",
-          name: `Moneda ${i + 1}`,
-          x: Math.min(sceneW - 80, 200 + i * 95),
-          y: Math.max(80, groundY - 110 - (i % 3) * 45),
-          w: 22,
-          h: 22,
-          color: "#fbbf24",
-          collectible: true,
-          value: 10,
-        });
-      }
-      changesSummary.push(`${count} moneda(s) añadida(s) a la escena del proyecto`);
-    }
-
-    if (wantsToAdd && /\b(plataforma|plataformas|escalon|escalón|trampolin|trampolín|resorte)\b/i.test(text) && !kindsToRemove.includes("platform")) {
-      const countMatch = text.match(/(\d+)\s*plataformas?/i) || text.match(/plataformas?\s*[:=]\s*(\d+)/i);
-      const count = countMatch ? Math.max(1, Math.min(10, Number(countMatch[1]))) : 2;
-      const isMoving = /\b(movil|móvil|mueve|mueven)\b/i.test(text);
-      const isSpring = /\b(trampolin|trampolín|resorte|rebote|rebota)\b/i.test(text);
-      for (let i = 0; i < count; i++) {
-        entitiesToAdd.push({
-          kind: "platform",
-          name: isSpring ? `Trampolín ${i + 1}` : `Plataforma ${i + 1}`,
-          x: Math.min(sceneW - 200, 240 + i * 210),
-          y: Math.max(120, groundY - 95 - i * 65),
-          w: isSpring ? 90 : 160,
-          h: 26,
-          color: isSpring ? "#f59e0b" : "#2563eb",
-          solid: true,
-          ...(isMoving ? { moving: { axis: "x" as const, range: 130, speed: 85 } } : {}),
-          ...(isSpring ? { spring: { force: 680 } } : {}),
-        });
-      }
-      changesSummary.push(`${count} plataforma(s) añadida(s) a la escena del proyecto`);
-    }
-  }
-
-  // 5. Edición directa de propiedades de las entidades existentes en el proyecto (`entityUpdates`)
-  const entityPatch: Partial<Entity> = {};
-  const baseRefEnt =
-    targetEnt ??
-    scene?.entities.find((e) => e.kind === inferredTargetKind) ??
-    scene?.entities[0];
-
-  // Color de la entidad (si no fue solo "cambiar fondo")
-  if (!/\b(fondo|background|cielo)\b/i.test(text) || /\b(jugador|enemigo|plataforma|moneda|color\s+del)\b/i.test(text)) {
-    const col = detectColorFromInstruction(text);
-    if (col && (/\b(color|pintar|pinta|cambiar|hacer|pon|rojo|verde|azul|amarillo|morado|rosa|naranja|blanco|negro|#)\b/i.test(text))) {
-      entityPatch.color = col.hex;
-      changesSummary.push(`Color de ${targetEnt?.name || inferredTargetKind} editado en el proyecto a ${col.label}`);
-    }
-  }
-
-  // Tamaño (ancho / alto / escala)
-  const wMatch = text.match(/\b(?:ancho|w|width)\s*(?:=|:|a|de)?\s*(\d+)/i);
-  const hMatch = text.match(/\b(?:alto|altura|h|height)\s*(?:=|:|a|de)?\s*(\d+)/i);
-  const sizeMatch = text.match(/\b(?:tama[ñn]o|escala|size)\s*(?:=|:|a|de)?\s*(\d+)/i);
-  if (wMatch) entityPatch.w = Math.max(10, Math.min(600, Number(wMatch[1])));
-  if (hMatch) entityPatch.h = Math.max(10, Math.min(600, Number(hMatch[1])));
-  if (sizeMatch && !wMatch && !hMatch) {
-    const s = Math.max(10, Math.min(400, Number(sizeMatch[1])));
-    entityPatch.w = s;
-    entityPatch.h = s;
-  } else if (!wMatch && !hMatch && /\b(gigante|enorme|grande|agrandar|crecer|doble\s+tama[ñn]o)\b/i.test(text) && !/\bjefe\b/i.test(text)) {
-    const bw = baseRefEnt?.w || 40;
-    const bh = baseRefEnt?.h || 56;
-    const mult = /\b(gigante|enorme)\b/i.test(text) ? 1.8 : 1.45;
-    entityPatch.w = Math.round(bw * mult);
-    entityPatch.h = Math.round(bh * mult);
-    changesSummary.push(`Tamaño de ${targetEnt?.name || inferredTargetKind} aumentado a ${entityPatch.w}x${entityPatch.h} en el proyecto`);
-  } else if (!wMatch && !hMatch && /\b(peque[ñn]o|chico|mini|miniatura|encoger|reducir)\b/i.test(text)) {
-    const bw = baseRefEnt?.w || 40;
-    const bh = baseRefEnt?.h || 56;
-    entityPatch.w = Math.max(14, Math.round(bw * 0.65));
-    entityPatch.h = Math.max(16, Math.round(bh * 0.65));
-    changesSummary.push(`Tamaño de ${targetEnt?.name || inferredTargetKind} reducido a ${entityPatch.w}x${entityPatch.h} en el proyecto`);
-  }
-
-  // Posición (x, y)
-  const posPairMatch = text.match(/\b(?:mover\s+a|posici[oó]n|coordenadas?|en)\s*\(?\s*(\d+)\s*[,y]\s*(\d+)\s*\)?/i);
-  const xExplicit = text.match(/\bx\s*[:=]\s*(\d+)/i);
-  const yExplicit = text.match(/\by\s*[:=]\s*(\d+)/i);
-  if (posPairMatch) {
-    entityPatch.x = Number(posPairMatch[1]);
-    entityPatch.y = Number(posPairMatch[2]);
-    changesSummary.push(`Posición de ${targetEnt?.name || inferredTargetKind} actualizada a (${entityPatch.x}, ${entityPatch.y})`);
-  } else {
-    if (xExplicit) entityPatch.x = Number(xExplicit[1]);
-    if (yExplicit) entityPatch.y = Number(yExplicit[1]);
-  }
-
-  // Velocidad / Salto / Comportamientos en la entidad del proyecto
-  if (/\b(salta|saltar|salte|salto|brinca|brincar|jump|rebota|rebotar)\b/i.test(text)) {
-    const jumpNum = text.match(/(?:salto|saltar|jump|fuerza)\s*(?:=|:|a|de)?\s*(\d+)/i);
-    const force = jumpNum ? Math.max(200, Math.min(1200, Number(jumpNum[1]))) : /alto|super|súper|gran/i.test(text) ? 680 : 560;
-    if (inferredTargetKind === "platform") {
-      entityPatch.spring = { force };
-      changesSummary.push(`Plataforma configurada con trampolín de potencia ${force} en el proyecto`);
-    } else {
-      entityPatch.gravity = true;
-      entityPatch.vy = -Math.min(force, 320);
-      changesSummary.push(`Propiedad de salto (${force}) aplicada sobre ${targetEnt?.name || "Jugador"} en el proyecto`);
-    }
-  }
-
-  if (/\b(velocidad|rapido|rápido|lento|correr|corre|vx|speed)\b/i.test(text)) {
-    const speedNum = text.match(/(?:velocidad|vx|speed|corre|correr)\s*(?:=|:|a|de)?\s*(-?\d+)/i);
-    const spd = speedNum ? Number(speedNum[1]) : /lento|despacio/i.test(text) ? 110 : 340;
-    entityPatch.vx = spd;
-    changesSummary.push(`Velocidad horizontal de ${targetEnt?.name || inferredTargetKind} editada a ${spd} en el proyecto`);
-  }
-
-  if (/\b(movil|móvil|se\s+mueve|oscila)\b/i.test(text) && inferredTargetKind === "platform") {
-    entityPatch.moving = {
-      axis: /vertical|arriba|abajo|eje\s*y/i.test(text) ? "y" : "x",
-      range: 150,
-      speed: 90,
-    };
-    changesSummary.push("Comportamiento de plataforma móvil activado en el proyecto");
-  }
-
-  if (/\b(patrulla|patrullar|camina\s+de\s+lado)\b/i.test(text) && (inferredTargetKind === "enemy" || targetEnt)) {
-    entityPatch.patrol = { range: 160, ledgeSafe: true };
-    if (!entityPatch.vx) entityPatch.vx = 95;
-    changesSummary.push("Patrulla activada en la entidad del proyecto");
-  }
-
-  if (/\b(rompible|fragil|frágil|se\s+cae|desmorona)\b/i.test(text) && inferredTargetKind === "platform") {
-    entityPatch.crumble = { delay: 0.45, respawn: 3 };
-    changesSummary.push("Plataforma frágil configurada en el proyecto");
-  }
 
   if (/(dash|impulso|esquivar|estela|velocidad turbo)/i.test(text)) {
     synthSounds.dash = { name: "dash", wave: "triangle", freq: 190, endFreq: 720, duration: 0.14, volume: 0.4 };
@@ -1248,40 +853,28 @@ export function buildOrionIntelligentPatch(
     changesSummary.push("Sintetizador WebAudio activado en HTML5");
   }
 
-  // Compilar siempre el script HTML5 independiente para que la instrucción quede activa tanto en el proyecto como en el runtime HTML5
-  const userLang = loadUserLanguage(project);
-  const compiled = compileUserLanguageLocally(instruction, userLang, {
-    targetEntityId: targetEnt?.id ?? null,
-    targetEntityKind: inferredTargetKind,
-  });
-  if (compiled.compiledJs && jsSnippets.length === 0) {
-    jsSnippets.push(compiled.compiledJs);
-  }
-  Object.assign(synthSounds, compiled.synthSounds);
-
-  if (Object.keys(entityPatch).length > 0 || compiled.compiledScripts.length > 0) {
-    entityUpdates.push({
-      ...(targetEnt ? { id: targetEnt.id } : { targetKind: inferredTargetKind }),
-      ...(Object.keys(entityPatch).length > 0 ? { patch: entityPatch } : {}),
-      ...(compiled.compiledScripts.length > 0 ? { scriptsToAdd: compiled.compiledScripts } : {}),
+  if (/(jefe|boss|enemigo|patrulla|perseguir)/i.test(text) && scene) {
+    entitiesToAdd.push({
+      kind: "enemy",
+      name: "Jefe Orión",
+      x: Math.min(scene.width - 180, 620),
+      y: Math.max(120, scene.height - 220),
+      w: 64,
+      h: 64,
+      vx: 95,
+      color: "#f43f5e",
+      patrol: { range: 160, ledgeSafe: true },
     });
-  }
-
-  if (changesSummary.length === 0) {
-    changesSummary.push(
-      `Proyecto y script HTML5 actualizados (${compiled.explanation})`,
-    );
+    changesSummary.push("Nuevo enemigo añadido a la escena");
   }
 
   return {
-    reply: `Soy Orión. He editado el proyecto y el archivo HTML5 de tu juego aplicando: ${changesSummary.join("; ")}.`,
+    reply: `Soy Orión. He actualizado el archivo HTML5 de tu juego aplicando: ${changesSummary.join("; ") || "edición en el runtime HTML5"}.`,
     changesSummary,
     scenePatch: Object.keys(scenePatch).length > 0 ? scenePatch : undefined,
     settingsPatch: Object.keys(settingsPatch).length > 0 ? settingsPatch : undefined,
-    replaceAllEntities: replaceAllEntities || undefined,
     entitiesToAdd: entitiesToAdd.length > 0 ? entitiesToAdd : undefined,
     entityUpdates: entityUpdates.length > 0 ? entityUpdates : undefined,
-    kindsToRemove: kindsToRemove.length > 0 ? kindsToRemove : undefined,
     redistributeLayout,
     synthSounds: Object.keys(synthSounds).length > 0 ? synthSounds : undefined,
     customRuntimeJs: jsSnippets.join("\n\n"),
@@ -1290,22 +883,21 @@ export function buildOrionIntelligentPatch(
 }
 
 /**
- * Ejecuta una petición de edición de juego o traducción del lenguaje propio del usuario con la IA de Orión:
+ * Ejecuta una petición de edición de juego con la Inteligencia Artificial real de Orión:
  * 1. Consulta el endpoint del servidor `/api/orion/edit-game` (respaldado por `@google/genai` Gemini 3.8 Flash).
  * 2. Si el servidor no está accesible en el entorno actual, consulta directamente el servicio Gemini (`geminiChat`) con una sesión limpia.
- * 3. Combina con el parche estructural del proyecto (`buildOrionIntelligentPatch`) para garantizar que las entidades, propiedades de escena y scripts HTML5 independientes se editen realmente en el proyecto.
+ * 3. Aplica el parche devuelto por la IA sobre las escenas, entidades, scripts, sonidos y runtime HTML5 del proyecto.
  */
 export async function runOrionGameEdit(args: {
   instruction: string;
   project: Project;
-  targetEntityId?: string | null;
   currentHtml?: string;
   signal?: AbortSignal;
 }): Promise<OrionEditResult> {
-  const { instruction, signal, targetEntityId } = args;
+  const { instruction, signal } = args;
   const trimmed = instruction.trim();
   if (!trimmed) {
-    throw new Error("Escribe una instrucción o código en tu lenguaje para que Orión lo traduzca y aplique.");
+    throw new Error("Escribe una instrucción para que Orión edite el juego.");
   }
 
   // Si el usuario editó antes el HTML manualmente, partimos del proyecto sincronizado
@@ -1318,9 +910,6 @@ export async function runOrionGameEdit(args: {
     }
   }
 
-  const userLang = loadUserLanguage(workingProject);
-  const promptWithLanguageContext = `${trimmed}\n\n${buildUserLanguagePromptContext(userLang, trimmed)}`;
-
   const recentHistoryText = (workingProject.customRuntime?.orionHistory ?? [])
     .slice(-6)
     .map((m) => `${m.role === "assistant" ? "Orión" : "Creador"}: ${m.content}`)
@@ -1328,6 +917,7 @@ export async function runOrionGameEdit(args: {
 
   let aiPatch: OrionEditPatch | null = null;
   let modelUsed = "Orión · Gemini";
+  let lastError: Error | null = null;
 
   // 1) Consultar el servidor real de Orión (/api/orion/edit-game con @google/genai)
   try {
@@ -1335,7 +925,7 @@ export async function runOrionGameEdit(args: {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        instruction: promptWithLanguageContext,
+        instruction: trimmed,
         projectSummary: summarizeProjectForOrionArchitect(workingProject),
         recentHistory: recentHistoryText,
       }),
@@ -1348,9 +938,13 @@ export async function runOrionGameEdit(args: {
         aiPatch = data.patch;
         modelUsed = data.model ? `Orión · ${data.model}` : "Orión · Gemini 3.8 Flash";
       }
+    } else if (!serverResp.ok && contentType.includes("application/json")) {
+      const errData = (await serverResp.json().catch(() => null)) as { error?: string } | null;
+      if (errData?.error) lastError = new Error(errData.error);
     }
   } catch (err) {
     if (signal?.aborted) throw err;
+    if (err instanceof Error) lastError = err;
   }
 
   // 2) Si el endpoint de servidor no estuvo disponible, llamar directamente a Gemini (geminiChat) con un turno único limpio
@@ -1368,67 +962,16 @@ export async function runOrionGameEdit(args: {
       }
     } catch (err) {
       if (signal?.aborted) throw err;
+      if (err instanceof Error) lastError = err;
     }
   }
 
-  // 3) Construir parche estructural determinista para garantizar que el proyecto (escena, entidades, física y script HTML5) siempre se edite de verdad
-  const structuralPatch = buildOrionIntelligentPatch(trimmed, workingProject, targetEntityId);
   if (!aiPatch) {
-    aiPatch = structuralPatch;
-    modelUsed = `Orión · Traductor ${userLang.name}`;
-  } else {
-    if (!aiPatch.scenePatch && structuralPatch.scenePatch) {
-      aiPatch.scenePatch = structuralPatch.scenePatch;
-    }
-    if ((!aiPatch.entitiesToAdd || aiPatch.entitiesToAdd.length === 0) && structuralPatch.entitiesToAdd) {
-      aiPatch.entitiesToAdd = structuralPatch.entitiesToAdd;
-    }
-    if ((!aiPatch.entityUpdates || aiPatch.entityUpdates.length === 0) && structuralPatch.entityUpdates) {
-      aiPatch.entityUpdates = structuralPatch.entityUpdates;
-    }
-    if ((!aiPatch.kindsToRemove || aiPatch.kindsToRemove.length === 0) && structuralPatch.kindsToRemove) {
-      aiPatch.kindsToRemove = structuralPatch.kindsToRemove;
-    }
-    if (!aiPatch.redistributeLayout && structuralPatch.redistributeLayout) {
-      aiPatch.redistributeLayout = structuralPatch.redistributeLayout;
-    }
-    if (!aiPatch.customRuntimeJs?.trim() && structuralPatch.customRuntimeJs) {
-      aiPatch.customRuntimeJs = structuralPatch.customRuntimeJs;
-    }
-    aiPatch.synthSounds = {
-      ...(structuralPatch.synthSounds ?? {}),
-      ...(aiPatch.synthSounds ?? {}),
-    };
+    throw lastError ?? new Error("No se pudo conectar con la inteligencia artificial de Orión. Inténtalo de nuevo.");
   }
 
-  const compiledLocal = compileUserLanguageLocally(trimmed, userLang, {
-    targetEntityId: targetEntityId && targetEntityId !== "scene" ? targetEntityId : null,
-  });
-
-  if (compiledLocal) {
-    if (!aiPatch.customRuntimeJs || !aiPatch.customRuntimeJs.trim()) {
-      aiPatch.customRuntimeJs = compiledLocal.compiledJs;
-    }
-    aiPatch.synthSounds = {
-      ...(compiledLocal.synthSounds ?? {}),
-      ...(aiPatch.synthSounds ?? {}),
-    };
-    const hasEntityScripts = (aiPatch.entityUpdates ?? []).some(
-      (u) => Array.isArray(u.scriptsToAdd) && u.scriptsToAdd.length > 0
-    );
-    if (!hasEntityScripts && compiledLocal.compiledScripts.length > 0) {
-      aiPatch.entityUpdates = [
-        ...(aiPatch.entityUpdates ?? []),
-        {
-          ...(targetEntityId && targetEntityId !== "scene"
-            ? { id: targetEntityId }
-            : { targetKind: "player" }),
-          scriptsToAdd: compiledLocal.compiledScripts,
-        },
-      ];
-    }
-  }
-
+  // Si la IA pidió además patrones complementarios (como sonidos o redistribución) pero dejó vacío algún detalle técnico,
+  // respetamos íntegramente lo que decidió la IA en `aiPatch`.
   const updatedProject = applyOrionPatchToProject(workingProject, aiPatch);
 
   const rawReply = typeof aiPatch.reply === "string" ? aiPatch.reply.trim() : "";
@@ -1436,12 +979,12 @@ export async function runOrionGameEdit(args: {
     ? rawReply.includes("Orión")
       ? rawReply
       : `Soy Orión. ${rawReply}`
-    : "Soy Orión. He traducido tus instrucciones a código JavaScript/HTML5 y las he aplicado a tu juego.";
+    : "Soy Orión. He aplicado las modificaciones directamente en tu juego y en su archivo HTML5.";
 
   const summaryList =
     Array.isArray(aiPatch.changesSummary) && aiPatch.changesSummary.length > 0
       ? aiPatch.changesSummary.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
-      : ["Lenguaje traducido a JavaScript/HTML5 y bloques del motor por Orión"];
+      : ["Juego y documento HTML5 actualizados por Orión"];
 
   const userMsg: OrionHistoryItem = {
     id: uid(),
@@ -1457,45 +1000,12 @@ export async function runOrionGameEdit(args: {
     createdAt: Date.now() + 1,
   };
 
-  let nextUserLanguage = loadUserLanguage(updatedProject);
-  if (compiledLocal) {
-    const newProgram: CustomLanguageProgram = {
-      id: compiledLocal.programId,
-      title: compiledLocal.title,
-      sourceCode: trimmed,
-      compiledJs: aiPatch.customRuntimeJs?.trim() || compiledLocal.compiledJs,
-      compiledScripts: compiledLocal.compiledScripts,
-      explanation: compiledLocal.explanation,
-      targetEntityId: null,
-      updatedAt: Date.now(),
-    };
-    const mergedDict = [
-      ...nextUserLanguage.dictionary,
-      ...compiledLocal.detectedKeywords.filter(
-        (kw) => !nextUserLanguage.dictionary.some((d) => d.keyword.toLowerCase() === kw.keyword.toLowerCase())
-      ),
-    ];
-    nextUserLanguage = {
-      ...nextUserLanguage,
-      dictionary: mergedDict,
-      programs: [newProgram, ...nextUserLanguage.programs.filter((p) => p.sourceCode.trim() !== trimmed)].slice(0, 30),
-    };
-    saveUserLanguageToStorage(nextUserLanguage);
-  }
-
   const prevHistory = updatedProject.customRuntime?.orionHistory ?? [];
-  const mergedJsWithPrograms = mergeCompiledProgramsIntoRuntimeJs(
-    updatedProject.customRuntime?.jsCode,
-    nextUserLanguage.programs
-  );
-
   const finalProject: Project = {
     ...updatedProject,
     customRuntime: {
       ...(updatedProject.customRuntime ?? {}),
-      jsCode: mergedJsWithPrograms,
       orionHistory: [...prevHistory, userMsg, assistantMsg].slice(-40),
-      userLanguage: nextUserLanguage,
     },
   };
 

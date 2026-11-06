@@ -47,9 +47,9 @@ function getGeminiClient(): GoogleGenAI | null {
 }
 
 function resolveGeminiModel(requested?: string): string {
-  if (!requested || requested === "gemini-2.5-flash") return "gemini-3-flash-preview";
+  if (!requested) return "gemini-3.8-flash";
   if (requested.startsWith("gemini-")) return requested;
-  return "gemini-3-flash-preview";
+  return "gemini-3.8-flash";
 }
 
 /**
@@ -67,17 +67,12 @@ export async function invokeLLM(request: LLMRequest): Promise<LLMResponse> {
 
   const conversationTurns = request.messages.filter((m) => m.role !== "system");
 
-  // 1) Ruta principal: SDK oficial @google/genai en el servidor
+  // 1) Ruta principal: SDK oficial @google/genai en el servidor (con reintento en modelos alternativos si hay sobrecarga 503)
   const ai = getGeminiClient();
   if (ai) {
     const primaryModel = resolveGeminiModel(request.model);
     const candidateModels = Array.from(
-      new Set([
-        "gemini-3-flash-preview",
-        primaryModel,
-        "gemini-3.8-flash",
-        "gemini-flash-latest",
-      ]),
+      new Set([primaryModel, "gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]),
     );
     const contents =
       conversationTurns.length > 0
@@ -106,7 +101,8 @@ export async function invokeLLM(request: LLMRequest): Promise<LLMResponse> {
             choices: [{ message: { content: text } }],
           };
         }
-      } catch {
+      } catch (err) {
+        console.error(`[invokeLLM @google/genai error (${modelName})]`, err);
         // Intenta el siguiente modelo de respaldo o continúa al siguiente proveedor
       }
     }
@@ -136,28 +132,20 @@ export async function invokeLLM(request: LLMRequest): Promise<LLMResponse> {
     systemInstruction ? `INSTRUCCIONES DEL SISTEMA:\n${systemInstruction}` : "",
     ...conversationTurns.map((m) => `${m.role === "assistant" ? "ASISTENTE" : "USUARIO"}:\n${extractMessageText(m.content)}`),
     request.responseMimeType === "application/json"
-      ? "IMPORTANTE: Devuelve ÚNICAMENTE JSON válido, sin texto conversacional fuera del JSON."
+      ? "IMPORTANTE: Devuelve ÚNICAMENTE un objeto JSON válido, sin texto conversacional fuera del JSON."
       : "",
   ]
     .filter(Boolean)
     .join("\n\n");
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12_000);
-  let fallbackRes: Response;
-  try {
-    fallbackRes = await fetch(GEMINI_PUBLIC_FALLBACK_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt: combinedPrompt.slice(-48_000),
-        session_id: `orion-srv-${Date.now().toString(36)}`,
-      }),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
+  const fallbackRes = await fetch(GEMINI_PUBLIC_FALLBACK_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt: combinedPrompt.slice(-48_000),
+      session_id: `orion-srv-${Date.now().toString(36)}`,
+    }),
+  });
 
   const payload = (await fallbackRes.json().catch(() => null)) as {
     status?: boolean;

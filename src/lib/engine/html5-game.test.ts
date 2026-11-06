@@ -159,7 +159,7 @@ describe("motor y vista previa HTML5 autónomos (independientes del editor)", ()
     expect(compiledHtml).toContain('"dash"');
     expect(compiledHtml).toContain('"laser"');
 
-    // Verificar que se eliminó el botón flotante de Orión y que el panel de scripts solo muestra el cuadro de scripts, el recuadro de código y el botón Aplicar sin mencionar IA
+    // Verificar que se eliminó el botón flotante de Orión y que su sistema de IA se reutiliza para crear Script manual sin bloques ni código a mano
     const editorSource = read("src/components/engine/AsternalEditor.tsx");
     expect(editorSource).not.toContain("orion-top-left-trigger");
     expect(editorSource).toContain("OrionAiModeScreen");
@@ -167,15 +167,11 @@ describe("motor y vista previa HTML5 autónomos (independientes del editor)", ()
     expect(editorSource).toContain("open-entity-script-manual-btn");
 
     const orionScreenSource = read("src/components/engine/OrionAiModeScreen.tsx");
-    expect(orionScreenSource).not.toContain("Inteligencia Artificial");
+    expect(orionScreenSource).toContain("Script manual · Inteligencia Artificial");
     expect(orionScreenSource).toContain("orion-ai-mode-fullscreen");
-    expect(orionScreenSource).toContain("Aplicar");
-    expect(orionScreenSource).toContain("Aplicando...");
 
     const scriptEditorSource = read("src/components/engine/ScriptEditor.tsx");
-    expect(scriptEditorSource).not.toContain("Inteligencia Artificial");
-    expect(scriptEditorSource).toContain("Aplicar");
-    expect(scriptEditorSource).toContain("Aplicando...");
+    expect(scriptEditorSource).toContain("SCRIPT MANUAL");
     expect(scriptEditorSource).not.toContain("+ NEW SCRIPT");
     expect(scriptEditorSource).not.toContain("+ ADD BLOCK");
   });
@@ -419,42 +415,113 @@ describe("motor y vista previa HTML5 autónomos (independientes del editor)", ()
     // Verificar que la biblioteca se gestiona en el apartado de Ajustes de AsternalEditor
     const editorSource = read("src/components/engine/AsternalEditor.tsx");
     expect(editorSource).toContain("settings-audio-library");
-    expect(editorSource).toContain("BIBLIOTECA DE SONIDOS Y MÚSICA");
+    expect(editorSource).toContain("BIBLIOTECA DE SONIDOS Y MÚSICA (ASSETS)");
   });
 
-  it("gestiona todos los scripts e interfaz desde el panel de Scripts Manuales, sin el editor de UI ni el sistema de Scratch", async () => {
+  it("integra Scripts Humanos (hechos a mano con bloques de Scratch, variables en pantalla, operadores, sensores y apariencia) junto a Scripts Manuales", async () => {
     const { createScriptRunner } = await import("./scripts");
-    const scene = newScene("Nivel Script Manual");
+    const {
+      SCRATCH_CATEGORIES,
+      SCRATCH_BLOCK_SPECS,
+      SCRATCH_EVENT_TEMPLATES,
+      collectAllVariableNames,
+    } = await import("./scratch-blocks-catalog");
+
+    // 1. Verifica catálogo oficial de categorías Scratch (scratchfoundation/scratch-blocks)
+    expect(SCRATCH_CATEGORIES.map((c) => c.id)).toEqual([
+      "events",
+      "motion",
+      "looks",
+      "sound",
+      "control",
+      "sensing",
+      "operators",
+      "variables",
+      "myblocks",
+    ]);
+    expect(SCRATCH_BLOCK_SPECS.length).toBeGreaterThanOrEqual(45);
+    expect(SCRATCH_EVENT_TEMPLATES.length).toBeGreaterThanOrEqual(12);
+
+    // 2. Configura una escena con variables de Scratch visibles en el escenario (monitores) y scripts hechos a mano
+    const scene = newScene("Nivel Scratch Humano");
     scene.variableDefinitions = [
       {
         id: "v_puntos",
-        name: "puntos_juego",
+        name: "puntos_scratch",
         scope: "scene",
         initialValue: 10,
         visibleOnStage: true,
       },
+      {
+        id: "v_energia",
+        name: "energia",
+        scope: "entity",
+        initialValue: 50,
+        visibleOnStage: true,
+      },
     ];
-    scene.variables = { puntos_juego: 10 };
+    scene.variables = { puntos_scratch: 10 };
 
     const player = scene.entities.find((e) => e.kind === "player")!;
+    player.variables = { energia: 50 };
     player.scripts = [
       {
-        id: "s_manual_1",
+        id: "s_scratch_1",
         event: "onStart",
         blocks: [
           { id: "b1", kind: "pointInDirection", value: 90 },
           { id: "b2", kind: "moveSteps", value: 25 },
           { id: "b3", kind: "turnRight", value: 15 },
-          { id: "b4", kind: "sayForSecs", text: "¡Listo!", value: 2000 },
+          { id: "b4", kind: "sayForSecs", text: "¡Hola Scratch!", value: 2000 },
           { id: "b5", kind: "changeSizeBy", value: 20 },
           {
             id: "b6",
             kind: "mathOperation",
             scope: "scene",
-            text: "puntos_juego",
-            varA: "$puntos_juego",
+            text: "puntos_scratch",
+            varA: "$puntos_scratch",
             mathOp: "mul",
             varB: "3",
+          },
+          {
+            id: "b7",
+            kind: "joinTextVariable",
+            scope: "scene",
+            text: "saludo",
+            varA: "Total: ",
+            varB: "$puntos_scratch",
+          },
+          {
+            id: "b8",
+            kind: "sensePropertyToVariable",
+            varA: "self",
+            varB: "x",
+            scope: "scene",
+            text: "pos_x",
+          },
+          {
+            id: "b9",
+            kind: "ifVariable",
+            scope: "scene",
+            text: "puntos_scratch",
+            operator: "gte",
+            value: 30,
+            thenBlocks: [
+              {
+                id: "b9_then",
+                kind: "changeVariable",
+                scope: "scene",
+                text: "puntos_scratch",
+                value: 5,
+              },
+              {
+                id: "b9_show",
+                kind: "showVariable",
+                scope: "scene",
+                text: "puntos_scratch",
+              },
+            ],
+            elseBlocks: [],
           },
         ],
       },
@@ -476,26 +543,52 @@ describe("motor y vista previa HTML5 autónomos (independientes del editor)", ()
 
     runner.step(scene, state, input, hooks, 1 / 60);
 
+    // Verifica que moveSteps desplazó en X (+25), turnRight rotó (+15), sayForSecs activó burbuja, changeSizeBy escaló 120%
     expect(player.x).toBeCloseTo(startX + 25, 1);
     expect(player.rotation).toBe(15);
-    expect(player._bubbleText).toBe("¡Listo!");
+    expect(player._bubbleText).toBe("¡Hola Scratch!");
     expect(player.w).toBe(Math.round(baseW * 1.2));
-    expect(scene.variables?.puntos_juego).toBe(30);
 
+    // Verifica operadores matemáticos, unión de textos, sensor de propiedad y condicional ifVariable de Scratch
+    expect(scene.variables?.puntos_scratch).toBe(35); // (10 * 3) + 5
+    expect(scene.variables?.saludo).toBe("Total: 30");
+    expect(scene.variables?.pos_x).toBe(Math.round(startX + 25));
+
+    const varNames = collectAllVariableNames(
+      scene.variableDefinitions,
+      player.variables,
+      scene.variables,
+      player.scripts
+    );
+    expect(varNames).toContain("puntos_scratch");
+    expect(varNames).toContain("energia");
+    expect(varNames).toContain("saludo");
+
+    // 3. Verifica que el HTML5 autónomo incluye monitores de variables en pantalla, burbujas Scratch y todos los bloques
     const html = buildStandaloneGameHtml({
       scene,
       scenes: [scene],
-      title: "Prueba Script Manual HTML5",
+      title: "Prueba Scratch HTML5",
     });
-    expect(html).toContain("puntos_juego");
+    expect(html).toContain("puntos_scratch");
+    expect(html).toContain('case "moveSteps":');
+    expect(html).toContain('case "sayForSecs":');
+    expect(html).toContain('block.kind === "ifSensing"');
+    expect(html).toContain('case "mathOperation":');
+    expect(html).toContain('case "showVariable":');
+    expect(html).toContain("e._bubbleText");
+    expect(html).toContain("scene.variableDefinitions");
 
-    // Verifica que el editor eliminó UIEditor y el sistema Scratch, gestionando todo desde Script Manual
+    // 4. Verifica que la interfaz ofrece tanto Scripts Manuales (IA) como Scripts Humanos (Scratch)
     const editorSource = read("src/components/engine/AsternalEditor.tsx");
-    expect(editorSource).not.toContain("UIEditor");
-    expect(editorSource).not.toContain("HumanScratchScreen");
-    expect(editorSource).not.toContain("SCRIPTS HUMANOS");
-    expect(editorSource).toContain("OrionAiModeScreen");
-    expect(editorSource).toContain("open-scene-script-manual-btn");
+    expect(editorSource).toContain("HumanScratchScreen");
+    expect(editorSource).toContain("SCRIPTS HUMANOS");
+    expect(editorSource).toContain("open-entity-human-scratch-btn");
+
+    const humanScreenSource = read("src/components/engine/HumanScratchScreen.tsx");
+    expect(humanScreenSource).toContain("SCRIPTS HUMANOS");
+    expect(humanScreenSource).toContain("SCRATCH BLOCKS · SIN IA");
+    expect(humanScreenSource).toContain("CREAR VARIABLE DE SCRATCH");
   });
 
   it("mantiene únicamente el recuadro limpio del nivel en SceneEditor sin barras ni funciones extra", () => {
@@ -506,128 +599,4 @@ describe("motor y vista previa HTML5 autónomos (independientes del editor)", ()
     expect(sceneEditorSource).not.toContain("CÁMARA INICIAL");
     expect(sceneEditorSource).toContain("ctx.strokeRect(0, 0, scene.width, scene.height);");
   });
-
-  it("traduce el lenguaje de programación inventado por el usuario (ej. SI el jugador pierde: MOSTRAR sonido en el mapa) a código JavaScript/HTML5 funcional y bloques del motor", async () => {
-    const {
-      compileUserLanguageLocally,
-      DEFAULT_USER_LANGUAGE,
-      extractCustomKeywordsFromCode,
-    } = await import("../ai/custom-language");
-    const { synthesizeScriptsFromRequest } = await import("../ai/gemini-provider");
-
-    const userCode = "SI el jugador pierde:\nMOSTRAR sonido en el mapa";
-    const compiled = compileUserLanguageLocally(userCode, {
-      ...DEFAULT_USER_LANGUAGE,
-      name: "MiLenguajeGamer",
-    });
-
-    expect(compiled.compiledScripts.length).toBeGreaterThan(0);
-    expect(compiled.compiledScripts[0].event).toBe("onLose");
-    expect(compiled.compiledScripts[0].customLanguageCode).toContain("SI el jugador pierde:");
-    expect(compiled.compiledScripts[0].languageName).toBe("MiLenguajeGamer");
-    expect(compiled.compiledScripts[0].blocks.some((b) => b.kind === "playSound")).toBe(true);
-    expect(compiled.compiledJs).toContain("window.AsternalRuntime.registerHook");
-    expect(compiled.compiledJs).toContain("SONIDO EN EL MAPA");
-
-    // También verifica el sintetizador de scripts manuales con lenguaje propio
-    const synth = synthesizeScriptsFromRequest(userCode);
-    expect(synth[0].event).toBe("onLose");
-    expect(synth[0].customLanguageCode).toContain("MOSTRAR sonido en el mapa");
-
-    // Verifica que un usuario pueda definir sus propias palabras e instrucciones personalizadas
-    const customLang = {
-      ...DEFAULT_USER_LANGUAGE,
-      name: "KronoScript",
-      dictionary: [
-        ...DEFAULT_USER_LANGUAGE.dictionary,
-        {
-          id: "kw-custom-1",
-          keyword: "ACTIVAR Protocolo Omega",
-          meaning: "Sumar 500 puntos y sacudir camara 12",
-          category: "accion" as const,
-        },
-      ],
-    };
-    const customCode = "CUANDO el jugador toca enemigo:\nACTIVAR Protocolo Omega";
-    const customCompiled = compileUserLanguageLocally(customCode, customLang);
-    expect(customCompiled.compiledScripts[0].event).toBe("onCollide");
-    expect(customCompiled.compiledScripts[0].blocks.some((b) => b.kind === "addScore" && b.value === 500)).toBe(true);
-
-    const detected = extractCustomKeywordsFromCode("SI cae al abismo:\nLANZAR destello solar", []);
-    expect(detected.length).toBeGreaterThanOrEqual(2);
-
-    // Verifica que buildOrionIntelligentPatch + applyOrionPatchToProject integren el JS traducido en el HTML5
-    const { newProject } = await import("./core");
-    const project = newProject();
-    const patch = buildOrionIntelligentPatch(userCode, project);
-    const updated = applyOrionPatchToProject(project, patch);
-    const html = buildProjectGameHtml(updated, true);
-    expect(html).toContain("SONIDO EN EL MAPA");
-
-    // Verifica que el panel de scripts no mencione inteligencia artificial y solo muestre el cuadro de scripts, el recuadro para escribir y el botón Aplicar / Aplicando...
-    const orionScreenSource = read("src/components/engine/OrionAiModeScreen.tsx");
-    const scriptEditorSource = read("src/components/engine/ScriptEditor.tsx");
-    expect(orionScreenSource).not.toContain("Inteligencia Artificial");
-    expect(orionScreenSource).not.toContain("Traducir con IA");
-    expect(orionScreenSource).toContain("Aplicando...");
-    expect(orionScreenSource).toContain("Aplicar");
-    expect(scriptEditorSource).not.toContain("Inteligencia Artificial");
-    expect(scriptEditorSource).not.toContain("TRADUCIR Y CREAR SCRIPT CON IA");
-    expect(scriptEditorSource).toContain("Aplicando...");
-    expect(scriptEditorSource).toContain("Aplicar");
-
-    // Verifica que "jugador salta" edite realmente la física de salto en HTML5 como script independiente sin generar placeholders de ondas
-    const jumpCompiled = compileUserLanguageLocally("jugador salta", DEFAULT_USER_LANGUAGE);
-    expect(jumpCompiled.compiledJs).toContain("pJump.vy = -");
-    expect(jumpCompiled.compiledJs).not.toContain("state.soundWaves.push");
-
-    const sceneWithJumpScript = newScene("Nivel Salto Independiente");
-    sceneWithJumpScript.entities[0].scripts = jumpCompiled.compiledScripts;
-    const htmlWithIndependentScript = buildStandaloneGameHtml({
-      scene: sceneWithJumpScript,
-      scenes: [sceneWithJumpScript],
-    });
-    expect(htmlWithIndependentScript).toContain("data-asternal-script-id=");
-    expect(htmlWithIndependentScript).toContain("pJump.vy = -");
-
-    // Verifica que un proyecto con el antiguo placeholder en customRuntime.jsCode se actualice automáticamente al sincronizar
-    const legacyProject = newProject();
-    legacyProject.customRuntime = {
-      jsCode: [
-        "// [BEGIN_USER_LANG_PROGRAM:ulp-legacy]",
-        "// Programa (AsternalLang Propio): jugador= salto",
-        "(function() {",
-        "  window.AsternalRuntime.registerHook({",
-        "    onTick: function(api) {",
-        '      var state = { soundWaves: [] }; state.soundWaves.push({ x: 0, y: 0, r: 8, maxR: 150, alpha: 0.9, color: "#38bdf8", label: "jugador= salto" });',
-        "    }",
-        "  });",
-        "})();",
-        "// [END_USER_LANG_PROGRAM:ulp-legacy]",
-      ].join("\n"),
-    };
-    const upgradedLegacyProject = syncRuntimeAndTexturesToProject(legacyProject);
-    expect(upgradedLegacyProject.customRuntime?.jsCode).not.toContain("state.soundWaves.push");
-    expect(upgradedLegacyProject.customRuntime?.jsCode).toContain("pJump.vy = -");
-
-    // Verifica que las instrucciones editen verdaderamente el proyecto (entidades, colores, tamaños y propiedades de escena)
-    const baseProj = newProject();
-    const initialCoins = baseProj.scenes[0].entities.filter((e) => e.kind === "coin").length;
-    const editPatch = buildOrionIntelligentPatch(
-      "hacer al jugador rojo y grande, añadir 4 monedas, fondo espacial y gravedad lunar",
-      baseProj,
-    );
-    const editedProj = applyOrionPatchToProject(baseProj, editPatch);
-    const editedScene = editedProj.scenes[0];
-    const editedPlayer = editedScene.entities.find((e) => e.kind === "player")!;
-    const afterCoins = editedScene.entities.filter((e) => e.kind === "coin").length;
-
-    expect(editedPlayer.color).toBe("#ef4444");
-    expect(editedPlayer.w).toBeGreaterThan(40);
-    expect(editedPlayer.h).toBeGreaterThan(56);
-    expect(afterCoins).toBe(initialCoins + 4);
-    expect(editedScene.gravity).toBe(460);
-    expect(editedScene.bg).toBe("#050816");
-  });
 });
-

@@ -77,7 +77,6 @@ function RootComponent() {
   // (Chrome/«Google») tapaba la interfaz y no aportaba nada aquí. Se conserva
   // dentro de campos de texto para no romper pegar/cortar/seleccionar.
   useEffect(() => {
-    document.documentElement.removeAttribute("data-theme-style");
     const blockContextMenu = (e: MouseEvent) => {
       const el = e.target as HTMLElement | null;
       if (el?.closest("input, textarea, [contenteditable='true']")) return;

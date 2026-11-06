@@ -127,44 +127,35 @@ export function AsternalMark({ size = 40, className = "", title = "Asternal" }: 
       {/* Cuadro con el degradado de marca */}
       <rect x="0" y="0" width="64" height="64" rx="17" fill={`url(#${bgId})`} />
 
-      {/* Luces, halo, letra y destello */}
+      {/* Luces y sombras suaves, recortadas al cuadro redondeado */}
       <g clipPath={`url(#${clipId})`}>
         <path d="M0 0 H30 L0 44 Z" fill={`url(#${glossId})`} />
+        <circle cx="53" cy="55" r="20" fill="#0b1c3a" opacity="0.10" />
         <ellipse cx="32" cy="31" rx="20" ry="21" fill={`url(#${glowId})`} />
 
-        {/* Sombra suave de la letra */}
-        <path
-          d={A_OUTLINE}
-          transform="translate(0 1.4)"
-          fill="#0a2558"
-          opacity="0.22"
-          fillRule="evenodd"
-        />
+        {/* Sombra de la letra: se ve tallada sobre el degradado */}
+        <path d={A_OUTLINE} transform="translate(1.2 1.6)" fill="#0b1c3a" opacity="0.30" fillRule="evenodd" />
 
-        {/* La letra «A», con relleno platino-azulado */}
+        {/* La letra «A», con borde claro para que no pierda filo */}
         <path
           d={A_OUTLINE}
           fill={`url(#${letterId})`}
           fillRule="evenodd"
+          stroke="#f2f9ff"
+          strokeWidth="0.6"
+          strokeOpacity="0.75"
+          strokeLinejoin="round"
         />
-        {/* Luz de canto del trazo derecho */}
+        {/* Canto iluminado del trazo derecho */}
         <path d="M32 16 L44.8 50.4" fill="none" stroke={`url(#${rimId})`} strokeWidth="1.2" strokeLinecap="round" />
 
-        {/* Destello de cuatro puntas */}
-        <path d={SPARK} fill="#ffffff" />
+        {/* Destello */}
+        <circle cx="45.5" cy="15.5" r="7.5" fill="#ffffff" opacity="0.12" />
+        <path d={SPARK} fill="#ffffff" opacity="0.95" />
       </g>
 
-      {/* Borde cristalino interior */}
-      <rect
-        x="0.75"
-        y="0.75"
-        width="62.5"
-        height="62.5"
-        rx="16.25"
-        fill="none"
-        stroke={`url(#${edgesId})`}
-        strokeWidth="1.5"
-      />
+      {/* Brillo del borde superior */}
+      <rect x="1" y="1" width="62" height="62" rx="16" fill="none" stroke={`url(#${edgesId})`} strokeWidth="2" />
     </svg>
   );
 }
@@ -175,6 +166,19 @@ interface LetterAProps {
   className?: string;
 }
 
+/**
+ * La «A» del logotipo, suelta y sin cuadro.
+ *
+ * Es el mismo trazo que lleva el icono, recortado a su contorno exacto y con el
+ * vértice arriba y la línea base abajo: así se apoya sobre la línea base del
+ * nombre y puede hacer de primera letra, del mismo alto que una mayúscula.
+ *
+ * Va pintada con el mismo degradado que «sternal» —los dos azules de marca del
+ * tema, de arriba abajo— y lleva un halo azul desenfocado por detrás que le da
+ * volumen (el mismo truco de luz del cuadro, pero suelto, sin caja). El halo va
+ * en unidades del propio glifo, así que se escala con la letra y se ve igual de
+ * fino a 16 px que a 56 px.
+ */
 export function AsternalLetterA({ height = 40, className = "" }: LetterAProps) {
   const rawId = useId().replace(/[^a-zA-Z0-9]/g, "");
   const fillId = `ast-word-a-${rawId}`;
@@ -208,11 +212,7 @@ export function AsternalLetterA({ height = 40, className = "" }: LetterAProps) {
       {/* Luz azul por detrás de la letra: le da profundidad sobre el fondo. */}
       <path d={A_GLYPH} style={{ fill: BRAND_BLUE_SOFT }} opacity="0.45" filter={`url(#${glowId})`} fillRule="evenodd" />
       {/* La letra, con el degradado de marca. */}
-      <path
-        d={A_GLYPH}
-        fill={`url(#${fillId})`}
-        fillRule="evenodd"
-      />
+      <path d={A_GLYPH} fill={`url(#${fillId})`} fillRule="evenodd" />
     </svg>
   );
 }
